@@ -1,0 +1,339 @@
+/*
+ * config.h - ALL user-changeable settings for the FlightRadar project.
+ *
+ * Edit the values in this file, save, then compile and upload again.
+ *
+ * Runtime-safe options are copied into persistent Settings and can be edited
+ * from the device menu or web portal. Changing a runtime default here changes
+ * the settings signature, so the new firmware defaults replace saved values
+ * once after upload. Hardware pins, display wiring, and memory/layout options
+ * remain build-time-only.
+ */
+#pragma once
+
+#if __has_include(<Arduino.h>)
+  #include <Arduino.h>
+#else
+  // Fall back to minimal builtins so this file can still be parsed by an editor
+  // or generic C++ toolchain when the ESP32 Arduino core headers are not on the
+  // active include path.
+  using uint8_t  = unsigned char;
+  using int8_t   = signed char;
+  using uint16_t = unsigned short;
+  using int16_t  = signed short;
+  using uint32_t = unsigned int;
+  using int32_t  = signed int;
+  using uint64_t = unsigned long long;
+  using int64_t  = signed long long;
+#endif
+
+#define FW_NAME    "FLIGHT RADAR"
+#define FW_VERSION "4.2.1"
+
+// ===========================================================================
+//  WIFI
+// ===========================================================================
+// Name of your WiFi network (2.4 GHz only - the ESP32-S3 has no 5 GHz radio).
+// Leave "" to configure WiFi later using the setup portal.
+#define WIFI_SSID     ""
+#define WIFI_PASSWORD ""
+#define WIFI_HOSTNAME "FlightRadar"
+
+
+// How long to wait for one connection attempt before giving up (ms).
+#define WIFI_CONNECT_TIMEOUT_MS   15000
+// Delay before retrying after a failed attempt. It grows on repeated failures
+// (doubling) up to WIFI_RETRY_MAX_MS. Retrying never blocks the display.
+#define WIFI_RETRY_MIN_MS         3000
+#define WIFI_RETRY_MAX_MS         30000
+
+// Setup portal: the device creates its own WiFi network so you can type in
+// new WiFi credentials / home position from any phone or computer browser.
+// It starts automatically if no SSID is configured, or if the first
+// WIFI_PORTAL_AFTER_FAILS connection attempts after power-up all fail.
+// You can also start it from Menu > WiFi status, or by HOLDING the BACK button
+// while powering up / pressing reset.
+#define WIFI_PORTAL_SSID          "FlightRadar-Setup"
+// Password for the setup network. "" = open network. If set it must be
+// 8..63 characters.
+#define WIFI_PORTAL_PASSWORD      ""
+#define WIFI_PORTAL_AFTER_FAILS   5
+// The portal switches itself off after this long (ms) so it is not left open.
+#define WIFI_PORTAL_TIMEOUT_MS    600000UL
+
+// Time zone used for the clock / "LAST UPDATE" display (POSIX TZ string).
+// Examples:
+//   "UTC0"                         Universal time
+//   "GMT0BST,M3.5.0/1,M10.5.0"     United Kingdom / Ireland (with daylight saving)
+//   "CET-1CEST,M3.5.0,M10.5.0/3"   Central Europe
+//   "EST5EDT,M3.2.0,M11.1.0"       US Eastern
+//   "PST8PDT,M3.2.0,M11.1.0"       US Pacific
+//   "AEST-10AEDT,M10.1.0,M4.1.0/3" Australia East
+// NOTE: "UTC0BST" (no rule) was fixed to the full UK string below - without
+// the ",M3.5.0/1,M10.5.0" part the clock would not switch to BST in summer
+// or back to GMT in winter.
+#define TIMEZONE_POSIX            "GMT0BST,M3.5.0/1,M10.5.0"
+
+// ===========================================================================
+//  RADAR CENTRE (YOUR POSITION)
+// ===========================================================================
+// Decimal degrees. North and East are positive; South and West negative.
+#define HOME_LAT      50.81102183320401      // your latitude  (north +)
+#define HOME_LON      -0.5297898870078509    // your longitude (east +, west -)
+
+// ===========================================================================
+//  DISPLAY (ST7796S 480x320 module, run in portrait)
+// ===========================================================================
+// The TFT's SPI pins (SCK, MOSI, CS, DC, RST) are NOT set here: TFT_eSPI can
+// only read them from its own User_Setup.h - see TFT_SETUP.md. They are:
+//   SCK=GPIO12  MOSI=GPIO11  CS=GPIO10  DC=GPIO9  RST=GPIO8
+// Only the backlight pin is controlled by this firmware:
+#define TFT_BLK_PIN               13
+
+// Panel rotation: 0 = portrait 320x480 (normal), 2 = portrait rotated 180
+// degrees (use if the display is mounted upside down).
+#define DISPLAY_ROTATION          0
+
+// Set to 1 if the test screen shows inverted colours (black looks white,
+// red looks cyan...). Many IPS panels need this = 1.
+#define DISPLAY_INVERT_COLOURS    0
+
+// Backlight control. 1 = dim the backlight with PWM on TFT_BLK_PIN.
+// 0 = backlight simply switched fully on (use this if the screen flickers or
+// changes brightness strangely - the brightness menu then has no effect).
+#define BACKLIGHT_PWM_ENABLED     1
+#define BACKLIGHT_PWM_FREQ_HZ     5000
+// 1 = pin HIGH turns the backlight on (normal). 0 = inverted module.
+#define BACKLIGHT_ACTIVE_HIGH     1
+// Default brightness in percent (5..100). Changeable in the menu.
+#define DISPLAY_BRIGHTNESS        80
+
+// Optional automatic night dimming (needs the clock, i.e. WiFi/NTP).
+#define NIGHT_MODE_ENABLED        0
+#define NIGHT_MODE_START_HOUR     22      // 0..23, local time
+#define NIGHT_MODE_END_HOUR       7       // 0..23, local time
+#define NIGHT_MODE_BRIGHTNESS     15      // percent while night mode is active
+
+// ===========================================================================
+//  CONTROLS (GPIO numbers) - change to suit your wiring
+// ===========================================================================
+// All inputs use INPUT_PULLUP and connect to GND when pressed/closed.
+// Avoid GPIO 0/3/45/46 (strapping), 19/20 (USB), 22-37 (flash/PSRAM or not
+// present on ESP32-S3), 43/44 (UART0). The compiler checks this for you.
+#define ENCODER_PIN_A             4       // encoder CLK
+#define ENCODER_PIN_B             5       // encoder DT
+#define ENCODER_PIN_SW            6       // encoder push button
+#define BUTTON_PIN_MENU           15
+#define BUTTON_PIN_BACK           16
+#define BUTTON_PIN_HOME           17
+
+// 1 = swap encoder direction (if clockwise zooms OUT on your encoder).
+#define ENCODER_REVERSE           0
+// Number of quadrature edges per click (detent). 4 suits most encoders
+// (KY-040, EC11). If one click only moves half a step (you must turn two
+// clicks per zoom level) use 2; if one click moves several steps use 4.
+#define ENCODER_STEPS_PER_DETENT  4
+#define BUTTON_DEBOUNCE_MS        25
+// Encoder button held this long = "long press" (ms).
+#define LONG_PRESS_MS             1000
+
+// ===========================================================================
+//  ONBOARD RGB STATUS LED
+// ===========================================================================
+// Most ESP32-S3-DevKitC-1 (N16R8) boards have a single addressable WS2812
+// "NeoPixel" LED built in, which lights up a default colour at boot until
+// something explicitly turns it off - that's the stray light you're seeing,
+// not a fault. It's driven over a single data pin (not a plain on/off GPIO),
+// so turning it off needs the Adafruit NeoPixel library: install it via
+// Tools > Manage Libraries > search "Adafruit NeoPixel" > Install.
+// Pin is 48 on most current DevKitC-1 boards, 38 on older ones - if it's
+// still lit after flashing, try changing this to 38 (or check your board's
+// schematic/silkscreen for "RGB LED" or "WS2812").
+#define ONBOARD_RGB_LED_PIN        48      // set to -1 if your board has none / you don't want this
+
+// ===========================================================================
+//  AUDIO ANNOUNCEMENTS (I2S amplifier, e.g. MAX98357A, + speaker)
+// ===========================================================================
+#define AUDIO_ENABLED              1
+#define AUDIO_I2S_BCLK_PIN         18      // amp BCLK
+#define AUDIO_I2S_LRC_PIN          21      // amp LRC / LRCLK / WSEL
+#define AUDIO_I2S_DOUT_PIN         7       // amp DIN
+// GAIN and SD/MODE on the amp are left unconnected (floating): this gives the
+// MAX98357A its default ~9 dB gain and enables it in mono (L+R mixed), which
+// is what you want for a single speaker.
+
+// Instead of compiling the announcement clip in, fetch it from this URL the
+// first time a clip is played, then keep it in PSRAM for the rest of the
+// session. Emergency beeps remain immediate and do not wait for this download.
+// The speaker test uses this WAV even when announcements are disabled. Leave
+// as "" to use the built-in clip.
+//
+// Must be a DIRECT link to the raw .wav bytes with a normal Consstent-Length -
+// a GitHub "raw." link, a plain web server, or an S3/R2/Cloudflare bucket all
+// work. A Google Drive or Dropbox *share* page will NOT work - those serve a
+// webpage, not the file itself (Dropbox can work if you change the link's
+// "?dl=0" to "?dl=1"; Google Drive needs its direct-download link form).
+// If the fetch fails for any reason (no WiFi yet, host unreachable, wrong
+// format, too large) the firmware falls back to the built-in placeholder
+// clip automatically - it never blocks startup or crashes over this.
+#define MILITARY_WAV_URL                 "https://raw.githubusercontent.com/pixel-hosting/m/main/M1.wav"
+// Safety cap so a misconfigured URL can't exhaust memory (bytes).
+#define MILITARY_WAV_MAX_BYTES           (2UL * 1024UL * 1024UL)
+// Timeout for each step of the one-time download (ms).
+#define MILITARY_WAV_FETCH_TIMEOUT_MS    15000
+// How long to wait for WiFi to come up before giving up on the fetch and
+// using the placeholder clip instead (ms).
+#define MILITARY_WAV_WIFI_WAIT_MS        30000
+
+// How long (ms) before the same aircraft can trigger the military
+// announcement again (avoids repeats if it lingers or briefly drops out).
+#define MILITARY_ANNOUNCE_COOLDOWN_MS  (4UL * 60UL * 1000UL)
+
+// Set to 1 to print every aircraft's type/category/callsign/military-flag to
+// the Serial Monitor as it's received - useful for finding the exact type
+// code a real flyover reports, to add to HISTORIC_MIL_TYPES in aircraft.cpp
+// if it isn't triggering the announcement. Leave at 0 normally (noisy).
+#define DEBUG_PRINT_AIRCRAFT_TYPES      0
+
+// ===========================================================================
+//  FIRMWARE UPDATES (optional - over-the-air)
+// ===========================================================================
+// The device periodically fetches FW_UPDATE_VERSION_URL - a tiny text file
+// that should contain nothing but the latest version number, e.g. "4.3.0".
+// If it differs from FW_VERSION above, the device prompts on screen to
+// install the update; confirming downloads FW_UPDATE_BIN_URL and flashes it
+// over WiFi, then reboots into the new firmware. These URLs are never shown
+// or editable on the device - only here.
+//
+// TODO: fill these in once the GitHub repo is ready. Leave either one as ""
+// to disable update checking entirely (the default right now) - nothing
+// else in the firmware depends on this, so it is safe to leave blank.
+//
+// To publish a release:
+//   1. Bump FW_VERSION above and commit.
+//   2. Arduino IDE: Sketch > Export Compiled Binary. This writes a
+//      FlightRadar.ino.bin (plus bootloader/partition files you don't need
+//      for OTA - only the .ino.bin itself) into the sketch folder.
+//   3. Push the new FW_VERSION's value as plain text to the VERSION file
+//      below, and the matching FlightRadar.ino.bin to the bin file below,
+//      at the exact URLs configured here (e.g. a "raw." GitHub link to a
+//      fixed path in the repo - overwrite the same file each release so the
+//      URL never changes).
+#define FW_UPDATE_VERSION_URL     ""   // e.g. "https://raw.githubusercontent.com/you/repo/main/VERSION"
+#define FW_UPDATE_BIN_URL         ""   // e.g. "https://raw.githubusercontent.com/you/repo/main/firmware.bin"
+// How often to check automatically once WiFi is up (ms). The menu also has
+// a manual "Check for update" button that checks immediately regardless.
+#define FW_UPDATE_CHECK_INTERVAL_MS   (6UL * 60UL * 60UL * 1000UL)   // 6 hours
+#define FW_UPDATE_HTTP_TIMEOUT_MS     15000
+
+// ===========================================================================
+//  AIRCRAFT DATA SOURCE
+// ===========================================================================
+// The default queries adsb.lol and adsb.fi as equal partners on every update;
+// results are joined by ICAO and missing facts are supplemented across feeds.
+// Set ADSB_MULTI_SOURCE_ENABLED to 0 to use one provider. All feeds return the same readsb-style JSON
+//   {"ac":[{"hex":"406a7b","flight":"BAW123 ","lat":..,"lon":.., ...}], ...}
+// See adsb_api.h for endpoint / limits / restrictions of each source.
+#define ADSB_SOURCE_ADSB_LOL        1   // api.adsb.lol       (single-feed option)
+#define ADSB_SOURCE_AIRPLANES_LIVE  2   // api.airplanes.live (may need access approval)
+#define ADSB_SOURCE_ADSB_FI         3   // opendata.adsb.fi   (personal use)
+#define ADSB_SOURCE_CUSTOM          4   // your own URL, see below
+#define ADSB_SOURCE                 ADSB_SOURCE_ADSB_FI
+// Query both free community feeds on each update and merge aircraft by ICAO.
+// When enabled, the Advanced setting also allows selecting either feed alone.
+// NOTE: adsb.lol has been flaky on this network (403/429/503 - looks like an
+// overloaded/rate-limiting backend rather than a hard block, since it does
+// respond sometimes). That's fine to leave on: each feed in doFetch() fails
+// independently and silently falls back to "retain recent reports" without
+// affecting adsb.fi, so merging just means "use adsb.lol's data whenever it
+// happens to answer, ignore it otherwise" - more coverage with no downside.
+#define ADSB_MULTI_SOURCE_ENABLED   1
+// Only used when ADSB_SOURCE == ADSB_SOURCE_CUSTOM. printf-style format that
+// receives (double latitude, double longitude, unsigned radius_nm).
+#define ADSB_CUSTOM_URL_FORMAT      "https://example.com/v2/point/%.4f/%.4f/%u"
+
+// Planespotters requires a contact address in the User-Agent for photo lookups.
+#define PLANESPOTTERS_CONTACT       "jakewakeham2011@gmail.com"
+// JetAPI photo fallback. Queries use the aircraft registration when Planespotters
+// has no usable photo for the selected ICAO address.
+#define JETAPI_BASE_URL             "https://www.jetapi.dev"
+
+// Milliseconds between aircraft requests (approximately 5 s). Minimum 2000.
+// Public APIs allow at most 1 request per second; please stay well below.
+#define AIRCRAFT_UPDATE_INTERVAL    5000
+// Never send two requests closer together than this (ms), even when you zoom.
+#define AIRCRAFT_MIN_REQUEST_GAP    2000
+// HTTP timeouts (ms).
+#define ADSB_CONNECT_TIMEOUT_MS     6000
+#define ADSB_HTTP_TIMEOUT_MS        8000
+// 0 = HTTPS encrypted but the server certificate is NOT verified (works
+// everywhere, nothing secret is sent). 1 = also verify the server: you must
+// then define ADSB_ROOT_CA_PEM (a PEM string) - see README, "TLS".
+#define ADSB_VALIDATE_TLS           0
+
+// Aircraft whose last position report is older than this are removed (ms).
+#define AIRCRAFT_MAX_AGE            60000
+// Positions are extrapolated along the track for at most this long (ms)
+// after the last report; after that the aircraft simply stays where it was
+// until it is removed at AIRCRAFT_MAX_AGE.
+#define AIRCRAFT_MAX_EXTRAPOLATION  20000
+// After each update the display position glides to the new position over
+// this time (ms) instead of jumping.
+#define AIRCRAFT_BLEND_MS           1500
+// Maximum number of aircraft kept (nearest ones win). Each uses ~180 bytes
+// of PSRAM (x3 buffers).
+#define MAX_AIRCRAFT                250
+// 1 = also show aircraft reported as being on the ground.
+#define SHOW_GROUND_AIRCRAFT        0
+
+// ===========================================================================
+//  RADAR APPEARANCE
+// ===========================================================================
+// Default range in nautical miles: 5, 10, 20, 30, 50, 75, 100, 150 or 200.
+#define DEFAULT_RANGE               20
+// Default theme: 0 = green, 1 = amber, 2 = white.
+#define DEFAULT_THEME               0
+// Time for one sweep revolution at "NORMAL" radar speed (ms).
+#define RADAR_SWEEP_PERIOD          4000
+// Upper limit of animation frames per second.
+#define RADAR_MAX_FPS               25
+// Fading trail behind the sweep line: number of wedges and total angle.
+#define SWEEP_TRAIL_SEGMENTS        20
+#define SWEEP_TRAIL_DEGREES         55.0f
+// Aircraft icon size multiplier (1.0 = about 18 pixels across).
+#define AIRCRAFT_ICON_SCALE         1.0f
+// 1 = draw callsign labels beside aircraft (when there is room).
+#define LABELS_ENABLED              1
+// Maximum number of labels drawn per frame.
+#define LABEL_MAX                   24
+
+// ===========================================================================
+//  DEFAULT UNITS (changeable in the menu)
+// ===========================================================================
+#define DEFAULT_DISTANCE_UNIT       0   // 0 = nautical miles, 1 = kilometres
+#define DEFAULT_ALTITUDE_UNIT       0   // 0 = feet,           1 = metres
+#define DEFAULT_SPEED_UNIT          0   // 0 = knots,          1 = km/h
+
+// ===========================================================================
+//  MISC
+// ===========================================================================
+#define SERIAL_BAUD                 115200
+
+// ---------------------------------------------------------------------------
+//  Compile-time sanity checks (do not edit)
+// ---------------------------------------------------------------------------
+#if AIRCRAFT_UPDATE_INTERVAL < 2000
+  #error "AIRCRAFT_UPDATE_INTERVAL must be at least 2000 ms (public APIs are rate limited)."
+#endif
+#if MAX_AIRCRAFT < 20 || MAX_AIRCRAFT > 1000
+  #error "MAX_AIRCRAFT must be between 20 and 1000."
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  #define FR_PIN_BAD(p) (((p) >= 22 && (p) <= 37) || (p) == 19 || (p) == 20 || (p) == 43 || (p) == 44 || (p) < 0 || (p) > 48)
+  #if FR_PIN_BAD(TFT_BLK_PIN) || FR_PIN_BAD(ENCODER_PIN_A) || FR_PIN_BAD(ENCODER_PIN_B) || \
+      FR_PIN_BAD(ENCODER_PIN_SW) || FR_PIN_BAD(BUTTON_PIN_MENU) || FR_PIN_BAD(BUTTON_PIN_BACK) || \
+      FR_PIN_BAD(BUTTON_PIN_HOME) || FR_PIN_BAD(AUDIO_I2S_BCLK_PIN) || \
+      FR_PIN_BAD(AUDIO_I2S_LRC_PIN) || FR_PIN_BAD(AUDIO_I2S_DOUT_PIN)
+    #error "A GPIO in config.h is not usable on the ESP32-S3 (22-25 do not exist, 26-37 are flash/PSRAM, 19/20 USB, 43/44 UART0). See WIRING.md."
+  #endif
+#endif

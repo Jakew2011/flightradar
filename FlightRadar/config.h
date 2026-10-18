@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "FLIGHT RADAR"
-#define FW_VERSION "4.2.1"
+#define FW_VERSION "5.0.1"
 
 // ===========================================================================
 //  WIFI

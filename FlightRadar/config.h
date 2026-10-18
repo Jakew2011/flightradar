@@ -78,8 +78,8 @@
 //  RADAR CENTRE (YOUR POSITION)
 // ===========================================================================
 // Decimal degrees. North and East are positive; South and West negative.
-#define HOME_LAT      50.81102183320401      // your latitude  (north +)
-#define HOME_LON      -0.5297898870078509    // your longitude (east +, west -)
+#define HOME_LAT      0.000000000000000      // your latitude  (north +)
+#define HOME_LON      -0.0000000000000000    // your longitude (east +, west -)
 
 // ===========================================================================
 //  DISPLAY (ST7796S 480x320 module, run in portrait)

@@ -219,8 +219,8 @@
 //      at the exact URLs configured here (e.g. a "raw." GitHub link to a
 //      fixed path in the repo - overwrite the same file each release so the
 //      URL never changes).
-#define FW_UPDATE_VERSION_URL     ""   // e.g. "https://raw.githubusercontent.com/you/repo/main/VERSION"
-#define FW_UPDATE_BIN_URL         ""   // e.g. "https://raw.githubusercontent.com/you/repo/main/firmware.bin"
+#define FW_UPDATE_VERSION_URL     "https://raw.githubusercontent.com/jakew2011/flightradar/main/VERSION"   // e.g. ""
+#define FW_UPDATE_BIN_URL         "https://raw.githubusercontent.com/jakew2011/flightradar/main/firmware.bin"   // e.g. ""
 // How often to check automatically once WiFi is up (ms). The menu also has
 // a manual "Check for update" button that checks immediately regardless.
 #define FW_UPDATE_CHECK_INTERVAL_MS   (6UL * 60UL * 60UL * 1000UL)   // 6 hours

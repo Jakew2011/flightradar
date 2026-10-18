@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "FLIGHT RADAR"
-#define FW_VERSION "5.0.1"
+#define FW_VERSION "5.0.2"
 
 // ===========================================================================
 //  WIFI
@@ -109,10 +109,10 @@
 #define DISPLAY_BRIGHTNESS        80
 
 // Optional automatic night dimming (needs the clock, i.e. WiFi/NTP).
-#define NIGHT_MODE_ENABLED        0
-#define NIGHT_MODE_START_HOUR     22      // 0..23, local time
-#define NIGHT_MODE_END_HOUR       7       // 0..23, local time
-#define NIGHT_MODE_BRIGHTNESS     15      // percent while night mode is active
+#define NIGHT_MODE_ENABLED        1
+#define NIGHT_MODE_START_HOUR     21      // 0..23, local time
+#define NIGHT_MODE_END_HOUR       8       // 0..23, local time
+#define NIGHT_MODE_BRIGHTNESS     10      // percent while night mode is active
 
 // ===========================================================================
 //  CONTROLS (GPIO numbers) - change to suit your wiring

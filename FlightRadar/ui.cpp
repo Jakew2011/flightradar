@@ -10,11 +10,13 @@
 #include "settings.h"
 #include "audio.h"
 #include "update.h"
+#include "train.h"
 #include "icons.h"
 #include "util.h"
 #include <Arduino.h>
 #include <math.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <TJpg_Decoder.h>
 
@@ -23,7 +25,8 @@
 // ===========================================================================
 enum Screen : uint8_t {
   SCR_BOOT, SCR_RADAR, SCR_MENU, SCR_HOME_EDIT, SCR_WIFI, SCR_ABOUT,
-  SCR_REBOOT_PROMPT, SCR_DEFAULTS_CONFIRM, SCR_UPDATE_PROMPT, SCR_MILITARY_ALERT
+  SCR_REBOOT_PROMPT, SCR_DEFAULTS_CONFIRM, SCR_UPDATE_PROMPT, SCR_MILITARY_ALERT,
+  SCR_TRAIN, SCR_TRAIN_STATION_EDIT
 };
 // Radar UI modes (documented in README):
 //   MODE_ZOOM   : encoder turns zoom the radar; short press selects nearest aircraft.
@@ -76,7 +79,7 @@ enum ItemId : uint8_t {
   IT_PORTAL_ENABLED, IT_PORTAL_FAILS, IT_ADSB_MODE, IT_NIGHT_MODE,
   IT_GROUND, IT_AUDIO, IT_LABELS, IT_ENCODER_REVERSE, IT_ENCODER_STEPS,
   IT_PORTAL_NOW, IT_SWITCH_MODE, IT_SERIAL_BAUD, IT_RESTORE_DEFAULTS, IT_SPEAKER_TEST,
-  IT_CHECK_UPDATE
+  IT_CHECK_UPDATE, IT_TRAIN_STATION
 };
 struct MenuItem { const char* label; ItemId id; bool editable; };
 static const MenuItem MAIN_ITEMS[] = {
@@ -94,7 +97,8 @@ static const MenuItem ADVANCED_ITEMS[] = {
   {"ADS-B sources", IT_ADSB_MODE, true}, {"Night dimming", IT_NIGHT_MODE, true},
   {"Ground aircraft", IT_GROUND, true}, {"Audio", IT_AUDIO, true},
   {"Labels", IT_LABELS, true}, {"Encoder reverse", IT_ENCODER_REVERSE, true},
-  {"Encoder steps", IT_ENCODER_STEPS, true}, {"Open web settings", IT_PORTAL_NOW, false},
+  {"Encoder steps", IT_ENCODER_STEPS, true}, {"Train station", IT_TRAIN_STATION, false},
+  {"Open web settings", IT_PORTAL_NOW, false},
   {"Serial baud", IT_SERIAL_BAUD, true}, {"Test speaker", IT_SPEAKER_TEST, false},
   {"Check for update", IT_CHECK_UPDATE, false},
   {"Restore defaults", IT_RESTORE_DEFAULTS, false},
@@ -115,6 +119,15 @@ static struct {
   uint8_t lat[6];                           // DD.dddd
   uint8_t lon[7];                           // DDD.dddd
 } he;
+
+// train station (CRS code) editor
+static struct {
+  uint8_t pos;                              // 0..2 the three letters, 3 SAVE
+  char    letters[3];
+} te;
+
+// train board screen
+static bool s_trainMode = false;            // true once "Switch mode" has swapped the main screen to the train board
 
 static void toast(const char* msg, uint32_t nowMs, uint32_t ms = 2000) {
   fr_copy(s_toast, sizeof(s_toast), msg);
@@ -596,19 +609,23 @@ static void openMenu() {
   s_editing = false;
   s_dirty = true;
 }
+// Returns to whichever "main" screen is active - the radar, or the train
+// board if "Switch mode" has swapped it in - from menus, editors and prompts.
 static void closeToRadar() {
-  s_screen = SCR_RADAR;
+  s_screen = s_trainMode ? SCR_TRAIN : SCR_RADAR;
   s_editing = false;
   s_dirty = true;
   s_panelDirty = true;
   s_hdrKey[0] = 0;
+  trainSetActive(s_trainMode);
 }
 
 void uiShowMilitaryAlert() {
   // Don't interrupt menu navigation, home-location editing, or another
-  // already-active full-screen prompt - only the idle radar screen gets
-  // pre-empted, same priority rule as the firmware-update prompt below.
-  if (s_screen != SCR_RADAR) return;
+  // already-active full-screen prompt - only an idle main screen (radar or
+  // the train board) gets pre-empted, same priority rule as the
+  // firmware-update prompt below.
+  if (s_screen != SCR_RADAR && s_screen != SCR_TRAIN) return;
   s_screen = SCR_MILITARY_ALERT;
   s_milAlertStart = millis();
   s_milAlertCount = aircraftVisibleMilitaryCount();
@@ -729,6 +746,7 @@ static void itemValue(uint8_t id, char* out, size_t n) {
     case IT_RESTORE_DEFAULTS: fr_copy(out, n, "RESET"); break;
     case IT_SWITCH_MODE: fr_copy(out, n, "CLICK"); break;
     case IT_CHECK_UPDATE: fr_copy(out, n, updateIsEnabled() ? "CHECK" : "DISABLED"); break;
+    case IT_TRAIN_STATION: fr_copy(out, n, g_settings.trainStationCrs); break;
     default:           out[0] = 0;
   }
 }
@@ -899,6 +917,60 @@ static void homeEditPress(uint32_t now) {
 }
 
 // ===========================================================================
+//  Train station (CRS code) editor
+// ===========================================================================
+static void trainEditInit() {
+  for (int i = 0; i < 3; i++)
+    te.letters[i] = g_settings.trainStationCrs[i] ? g_settings.trainStationCrs[i] : 'A';
+  te.pos = 0;
+}
+
+static void drawTrainEdit() {
+  const Theme& th = themeCurrent();
+  TFT_eSprite& s = spRadar;
+  s.fillSprite(th.bg);
+  s.setTextDatum(TL_DATUM);
+  s.setTextColor(th.text);
+  s.drawString("SET TRAIN STATION (CRS CODE)", 8, 10, 4);
+  int x = (SCREEN_W - (3 * 24)) / 2;
+  for (int i = 0; i < 3; i++) {
+    drawCell(s, x, 90, te.letters[i], te.pos == i);
+    x += 28;
+  }
+  const bool hi = (te.pos == 3);
+  s.fillRoundRect(90, 160, 140, 38, 6, hi ? th.gridDim : th.bg);
+  s.drawRoundRect(90, 160, 140, 38, 6, hi ? th.select : th.grid);
+  s.setTextDatum(MC_DATUM);
+  s.setTextColor(hi ? th.select : th.text);
+  s.drawString("SAVE", 160, 179, 4);
+  s.pushSprite(0, RADAR_Y);
+
+  panelBegin();
+  panelText(14, "TURN: CHANGE LETTER (A-Z)", 2, th.text);
+  panelText(38, "PRESS: NEXT     BACK: CANCEL", 2, th.text);
+  panelText(62, "3-letter National Rail station code", 1, th.textDim);
+  panelText(80, "e.g. LIT = Littlehampton, VIC = London Victoria", 1, th.textDim);
+  if (s_toast[0] && (int32_t)(s_toastUntil - millis()) > 0) panelText(108, s_toast, 2, th.warn);
+  panelPush();
+  drawHeader("TRAIN STATION", "", "", th.ok);
+}
+
+static void trainEditTurn(int dir) {
+  if (te.pos >= 3) return;
+  char& c = te.letters[te.pos];
+  c = (char)('A' + ((c - 'A') + 26 + dir) % 26);
+}
+
+static void trainEditPress(uint32_t now) {
+  if (te.pos < 3) { te.pos++; return; }
+  char crs[4] = {te.letters[0], te.letters[1], te.letters[2], 0};
+  settingsSetTrainStation(crs);
+  trainRequestNow();
+  s_screen = SCR_MENU;
+  toast("STATION SAVED", now, 2000);
+}
+
+// ===========================================================================
 //  WiFi + About screens
 // ===========================================================================
 static void infoLine(int y, const char* label, const char* value, uint16_t vcol) {
@@ -971,6 +1043,87 @@ static void drawAboutScreen(uint32_t now) {
   panelText(14, "BACK: UP     HOME / HOLD: EXIT", 2, th.text);
   panelPush();
   drawHeader("ABOUT", "", "", th.ok);
+}
+
+// ===========================================================================
+//  Train departure board
+// ===========================================================================
+static void drawTrainScreen() {
+  const Theme& th = themeCurrent();
+  TFT_eSprite& s = spRadar;
+  s.fillSprite(th.bg);
+
+  if (!trainIsConfigured()) {
+    s.setTextDatum(MC_DATUM);
+    s.setTextColor(th.warn);
+    s.drawString("NO OPENLDBWS API TOKEN CONFIGURED", SCREEN_W / 2, 100, 2);
+    s.setTextColor(th.textDim);
+    s.drawString("Set OPENLDBWS_API_TOKEN in config.h", SCREEN_W / 2, 130, 2);
+  } else {
+    TrainStatus st;
+    trainGetStatus(st);
+    TrainService rows[TRAIN_MAX_SERVICES];
+    const uint16_t n = trainGetServices(rows, TRAIN_MAX_SERVICES);
+
+    s.setTextDatum(TL_DATUM);
+    s.setTextColor(th.text);
+    char title[48];
+    snprintf(title, sizeof(title), "%s",
+             st.locationName[0] ? st.locationName : g_settings.trainStationCrs);
+    s.drawString(title, 6, 4, 2);
+
+    // The panel is only SCREEN_W (320) px wide, so each departure gets two
+    // short lines rather than one cramped row: "HH:MM  PLAT n  STATUS" and
+    // the destination name underneath (truncated if it doesn't fit).
+    s.drawFastHLine(4, 22, SCREEN_W - 8, th.grid);
+
+    if (!st.lastOk && n == 0) {
+      s.setTextDatum(MC_DATUM);
+      s.setTextColor(th.warn);
+      s.drawString(st.lastError[0] ? st.lastError : "NO DATA YET", SCREEN_W / 2, 90, 2);
+    } else if (n == 0) {
+      s.setTextDatum(MC_DATUM);
+      s.setTextColor(th.textDim);
+      s.drawString("NO DEPARTURES DUE", SCREEN_W / 2, 90, 2);
+    } else {
+      const int rowH = 32;
+      const uint16_t maxRows = (uint16_t)fr_clamp((RADAR_H - 28) / rowH, 1, (int)n);
+      for (uint16_t i = 0; i < maxRows; i++) {
+        const int y = 28 + i * rowH;
+        const TrainService& r = rows[i];
+        const bool cancelled = strcasecmp(r.etd, "Cancelled") == 0;
+        const bool delayed = !cancelled && strcasecmp(r.etd, "On time") != 0 && strcasecmp(r.etd, "?") != 0;
+        s.setTextDatum(TL_DATUM);
+        s.setTextColor(cancelled ? th.textDim : th.text);
+        s.drawString(r.std, 6, y, 2);
+        char plat[12];
+        snprintf(plat, sizeof(plat), "PL %s", r.platform);
+        s.setTextColor(th.textDim);
+        s.drawString(plat, 60, y + 3, 1);
+        s.setTextColor(cancelled ? th.warn : delayed ? th.warn : th.ok);
+        s.drawString(r.etd, 60, y + 14, 1);
+        char dest[30];
+        fr_copy(dest, sizeof(dest), r.destination);
+        s.setTextColor(cancelled ? th.textDim : th.text);
+        s.drawString(dest, 150, y + 6, 2);
+        if (i + 1 < maxRows) s.drawFastHLine(4, y + rowH - 2, SCREEN_W - 8, th.gridDim);
+      }
+    }
+    if (st.nrccMessage[0]) {
+      s.setTextDatum(TL_DATUM);
+      s.setTextColor(th.warn);
+      char msg[46];
+      fr_copy(msg, sizeof(msg), st.nrccMessage);
+      s.drawString(msg, 6, RADAR_H - 12, 1);
+    }
+  }
+
+  s.pushSprite(0, RADAR_Y);
+  panelBegin();
+  panelText(14, "PRESS: REFRESH   MENU: SETTINGS", 2, th.text);
+  panelText(38, "BACK: BACK TO RADAR", 2, th.text);
+  panelPush();
+  drawHeader("TRAIN BOARD", "", "", trainIsConfigured() ? th.ok : th.warn);
 }
 
 static void drawRebootPrompt() {
@@ -1164,6 +1317,39 @@ void uiHandleEvent(const InputEvent& ev, uint32_t now) {
       }
       return;
 
+    case SCR_TRAIN:
+      switch (ev.type) {
+        case EVT_ENC_SHORT:
+          trainRequestNow();
+          toast("REFRESHING...", now, 1500);
+          break;
+        case EVT_ENC_LONG:
+        case EVT_MENU:
+          openMenu();
+          break;
+        case EVT_BACK:
+        case EVT_HOME:
+          // quick way back to the radar without going through the settings menu
+          s_trainMode = false;
+          closeToRadar();
+          break;
+        default: break;
+      }
+      return;
+
+    case SCR_TRAIN_STATION_EDIT:
+      switch (ev.type) {
+        case EVT_ENC_CW:    trainEditTurn(+1); break;
+        case EVT_ENC_CCW:   trainEditTurn(-1); break;
+        case EVT_ENC_SHORT: trainEditPress(now); break;
+        case EVT_BACK:      s_screen = SCR_MENU; break;
+        case EVT_ENC_LONG:
+        case EVT_HOME:
+        case EVT_MENU:      closeToRadar(); break;
+        default: break;
+      }
+      return;
+
     case SCR_MENU: {
       const int n = s_page == 1 ? (int)N_UNITS : s_page == 2 ? (int)N_ADVANCED : (int)N_MAIN;
       const MenuItem* items = s_page == 1 ? UNIT_ITEMS : s_page == 2 ? ADVANCED_ITEMS : MAIN_ITEMS;
@@ -1192,6 +1378,7 @@ void uiHandleEvent(const InputEvent& ev, uint32_t now) {
           } else if (it.id == IT_UNITS) { s_page = 1; }
           else if (it.id == IT_ADVANCED) { s_page = 2; }
           else if (it.id == IT_HOME) { homeEditInit(); s_screen = SCR_HOME_EDIT; }
+          else if (it.id == IT_TRAIN_STATION) { trainEditInit(); s_screen = SCR_TRAIN_STATION_EDIT; }
           else if (it.id == IT_WIFI) s_screen = SCR_WIFI;
           else if (it.id == IT_ABOUT) s_screen = SCR_ABOUT;
           else if (it.id == IT_PORTAL_NOW) {
@@ -1200,7 +1387,11 @@ void uiHandleEvent(const InputEvent& ev, uint32_t now) {
           }
           else if (it.id == IT_SPEAKER_TEST)
             toast(audioTestSpeaker() ? "CONFIGURED WAV TEST QUEUED" : "SPEAKER TEST UNAVAILABLE", now, 2500);
-          else if (it.id == IT_SWITCH_MODE) toast("SWITCH MODE NOT CONFIGURED", now, 2500);
+          else if (it.id == IT_SWITCH_MODE) {
+            if (!s_trainMode && !trainIsConfigured())
+              toast("TRAIN BOARD: NO API TOKEN CONFIGURED", now, 3000);
+            else { s_trainMode = !s_trainMode; closeToRadar(); }
+          }
           else if (it.id == IT_CHECK_UPDATE) {
             if (updateIsEnabled()) { updateCheckNow(); toast("CHECKING FOR UPDATE...", now, 2000); }
             else toast("UPDATE URL NOT CONFIGURED", now, 2500);
@@ -1359,7 +1550,17 @@ void uiUpdate(uint32_t now) {
         toast(squawk == 7500 ? "HIJACK SQUAWK 7500" : "EMERGENCY SQUAWK 7700", now, 5000);
         s_mode = MODE_SELECT;
       }
-      if (s_screen != SCR_RADAR) closeToRadar();
+      if (s_screen != SCR_RADAR) {
+        // An active emergency squawk always wins, even over the train board -
+        // it needs the radar screen specifically to show/follow the aircraft,
+        // so this bypasses closeToRadar()'s train-mode routing on purpose.
+        s_screen = SCR_RADAR;
+        s_editing = false;
+        s_dirty = true;
+        s_panelDirty = true;
+        s_hdrKey[0] = 0;
+        trainSetActive(false);
+      }
       s_mode = MODE_SELECT;
     } else {
       s_alertedKey = 0;
@@ -1421,5 +1622,7 @@ void uiUpdate(uint32_t now) {
     case SCR_DEFAULTS_CONFIRM: drawDefaultsConfirm(); break;
     case SCR_UPDATE_PROMPT: drawUpdatePrompt(); break;
     case SCR_MILITARY_ALERT: drawMilitaryAlert(); break;
+    case SCR_TRAIN:          drawTrainScreen(); break;
+    case SCR_TRAIN_STATION_EDIT: drawTrainEdit(); break;
   }
 }

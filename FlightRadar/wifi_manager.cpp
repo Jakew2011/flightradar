@@ -4,6 +4,7 @@
 #include "display.h"
 #include "adsb_api.h"
 #include "audio.h"
+#include "train.h"
 #include "util.h"
 #include <Arduino.h>
 #include <WiFi.h>
@@ -83,14 +84,29 @@ static void handleRoot() {
   }
   b += F("</datalist><label>WiFi password</label>"
          "<input name='pass' type='password' maxlength='64' placeholder='leave empty to keep the saved password'>"
-         "<label>Your latitude (decimal degrees, north +)</label><input name='lat' inputmode='decimal' value='");
+         "<label>Your latitude (decimal degrees, north +)</label><input id='lat' name='lat' inputmode='decimal' value='");
   if (g_settings.homeConfigured) b += String(g_settings.homeLat, 5);
-  b += F("'><label>Your longitude (decimal degrees, east +)</label><input name='lon' inputmode='decimal' value='");
+  b += F("'><label>Your longitude (decimal degrees, east +)</label><input id='lon' name='lon' inputmode='decimal' value='");
   if (g_settings.homeConfigured) b += String(g_settings.homeLon, 5);
-  b += F("'><label><input type='checkbox' name='open' value='1' style='width:auto'> "
+  b += F("'><button type='button' onclick='frUseLoc()'>Use my current location</button> "
+         "<small id='frLocMsg'></small>"
+         "<label><input type='checkbox' name='open' value='1' style='width:auto'> "
          "My WiFi network has no password</label><br><br>"
          "<button type='submit'>Save and connect</button></form>"
-         "<p><a href='/settings'>Advanced settings</a></p>");
+         "<p><a href='/settings'>Advanced settings</a></p>"
+         "<script>function frUseLoc(){"
+         "var m=document.getElementById('frLocMsg');"
+         "if(!navigator.geolocation){m.textContent=' Geolocation is not available in this browser.';return;}"
+         "m.textContent=' Locating...';"
+         "navigator.geolocation.getCurrentPosition(function(p){"
+         "document.getElementById('lat').value=p.coords.latitude.toFixed(5);"
+         "document.getElementById('lon').value=p.coords.longitude.toFixed(5);"
+         "m.textContent=' Filled in (accuracy about '+Math.round(p.coords.accuracy)+' m). Check it looks right, then Save.';"
+         "},function(e){"
+         "m.textContent=' Could not get your location: '+e.message+"
+         "' - note some browsers block this on a page like this one that isn\\'t HTTPS; type coordinates in manually if so.';"
+         "},{enableHighAccuracy:true,timeout:10000});"
+         "}</script>");
   sendPage(b);
 }
 
@@ -251,6 +267,10 @@ static void handleSave() {
       addNumberInput(b, "WAV download timeout (ms)", "wavtmo", g_settings.audioFetchTimeoutMs);
       addNumberInput(b, "WiFi wait for audio (ms)", "wavwait", g_settings.audioWifiWaitMs);
       addNumberInput(b, "Announcement cooldown (ms)", "cooldown", g_settings.announceCooldownMs);
+      b += F("<h3>Train departures</h3>");
+      addTextInput(b, "Station (3-letter CRS code, e.g. LIT)", "traincrs", g_settings.trainStationCrs, 3);
+      b += F("<p><small>Shown via the \"Switch mode\" button/menu item on the device. "
+             "Requires an OpenLDBWS API token in config.h.</small></p>");
       b += F("<h3>Display settings</h3><label>Aircraft range</label><select name='range'>");
       for (uint8_t i = 0; i < RANGE_COUNT; ++i) {
         b += F("<option value='"); b += String(i); b += F("'");
@@ -400,6 +420,12 @@ static void handleSave() {
         else s_invalidSettingsInput = true;
       }
       if (s_server->hasArg("clearappass")) g_settings.portalPass[0] = 0;
+      if (s_server->hasArg("traincrs")) {
+        String crs = s_server->arg("traincrs");
+        crs.trim();
+        if (crs.length() == 3) { settingsSetTrainStation(crs.c_str()); trainRequestNow(); }
+        else if (crs.length()) s_invalidSettingsInput = true;   // settingsSetTrainStation() sanitizes to 3 letters or falls back - a non-3-length entry just didn't get applied
+      }
       if (g_settings.wifiRetryMaxMs < g_settings.wifiRetryMinMs)
         { g_settings.wifiRetryMaxMs = g_settings.wifiRetryMinMs; s_invalidSettingsInput = true; }
       if (g_settings.adsbMinRequestGapMs > g_settings.adsbUpdateIntervalMs) {

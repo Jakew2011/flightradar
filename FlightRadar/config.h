@@ -1,14 +1,4 @@
-/*
- * config.h - ALL user-changeable settings for the FlightRadar project.
- *
- * Edit the values in this file, save, then compile and upload again.
- *
- * Runtime-safe options are copied into persistent Settings and can be edited
- * from the device menu or web portal. Changing a runtime default here changes
- * the settings signature, so the new firmware defaults replace saved values
- * once after upload. Hardware pins, display wiring, and memory/layout options
- * remain build-time-only.
- */
+
 #pragma once
 
 #if __has_include(<Arduino.h>)
@@ -27,8 +17,18 @@
   using int64_t  = signed long long;
 #endif
 
-#define FW_NAME    "FLIGHT RADAR"
-#define FW_VERSION "5.0.2"
+#define FW_NAME    "Transport Tracker"   // shown in the menu, web portal, and OTA update prompt
+#define FW_VERSION "6.1.1"
+
+// Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
+// from FW_VERSION above. Only bump this when the Settings struct in
+// settings.h itself changes shape (a field added, removed, or its type
+// changed) - never just because you edited a value elsewhere in this file
+// (WiFi creds, URLs, timeouts, etc.). Bumping it wipes saved WiFi/home
+// location/every other on-device setting back to this file's defaults;
+// leaving it alone (the normal case for an ordinary update) keeps everything
+// the user has configured on the device, even though config.h itself changed.
+#define SETTINGS_SCHEMA_VERSION 2
 
 // ===========================================================================
 //  WIFI
@@ -37,7 +37,7 @@
 // Leave "" to configure WiFi later using the setup portal.
 #define WIFI_SSID     ""
 #define WIFI_PASSWORD ""
-#define WIFI_HOSTNAME "FlightRadar"
+#define WIFI_HOSTNAME "Transport Tracker"
 
 
 // How long to wait for one connection attempt before giving up (ms).
@@ -53,7 +53,7 @@
 // WIFI_PORTAL_AFTER_FAILS connection attempts after power-up all fail.
 // You can also start it from Menu > WiFi status, or by HOLDING the BACK button
 // while powering up / pressing reset.
-#define WIFI_PORTAL_SSID          "FlightRadar-Setup"
+#define WIFI_PORTAL_SSID          "Transport-Setup"
 // Password for the setup network. "" = open network. If set it must be
 // 8..63 characters.
 #define WIFI_PORTAL_PASSWORD      ""
@@ -78,8 +78,8 @@
 //  RADAR CENTRE (YOUR POSITION)
 // ===========================================================================
 // Decimal degrees. North and East are positive; South and West negative.
-#define HOME_LAT      0.000000000000000      // your latitude  (north +)
-#define HOME_LON      -0.0000000000000000    // your longitude (east +, west -)
+#define HOME_LAT      0.00000000000000      // your latitude  (north +)
+#define HOME_LON      0.00000000000000       // your longitude (east +, west -)
 
 // ===========================================================================
 //  DISPLAY (ST7796S 480x320 module, run in portrait)
@@ -110,9 +110,9 @@
 
 // Optional automatic night dimming (needs the clock, i.e. WiFi/NTP).
 #define NIGHT_MODE_ENABLED        1
-#define NIGHT_MODE_START_HOUR     21      // 0..23, local time
-#define NIGHT_MODE_END_HOUR       8       // 0..23, local time
-#define NIGHT_MODE_BRIGHTNESS     10      // percent while night mode is active
+#define NIGHT_MODE_START_HOUR     22      // 0..23, local time
+#define NIGHT_MODE_END_HOUR       7       // 0..23, local time
+#define NIGHT_MODE_BRIGHTNESS     15      // percent while night mode is active
 
 // ===========================================================================
 //  CONTROLS (GPIO numbers) - change to suit your wiring
@@ -138,6 +138,46 @@
 #define LONG_PRESS_MS             1000
 
 // ===========================================================================
+//  TOUCHSCREEN (optional - XPT2046-style resistive touch controller)
+// ===========================================================================
+// This panel wasn't ordered with a touch overlay, but if your board has a
+// touch IC on it anyway (an XPT2046/similar chip tapped off the unused
+// header pins), set TOUCH_ENABLED to 1 and wire it up to test. With it 0,
+// none of this is compiled in and the encoder/buttons work exactly as
+// before - touch is purely additive, never required.
+//
+// This runs on its OWN dedicated SPI bus (its own CLK/MOSI/MISO/CS), not
+// shared with the TFT. TFT_eSPI's SPI bus is configured separately in
+// User_Setup.h and is write-only (no MISO wired, since the TFT never needs
+// to talk back) - the touch IC needs a MISO/T_DO line to report touches, so
+// reusing the TFT's bus isn't an option here. Four extra wires, but no risk
+// of the two SPI devices fighting over a bus neither of them fully owns.
+#define TOUCH_ENABLED              1
+#define TOUCH_CLK_PIN              1
+#define TOUCH_MOSI_PIN             2       // -> touch IC T_DIN
+#define TOUCH_MISO_PIN             42      // <- touch IC T_DO
+#define TOUCH_CS_PIN               14
+#define TOUCH_IRQ_PIN              -1     // -1 = no IRQ wired, poll continuously instead
+// Right now this is wired up as a minimal TEST mode, not a full touch UI:
+// any tap anywhere on the panel sends the same "short press" the encoder
+// button sends (select/confirm/next), and a held tap sends a "long press"
+// (opens the menu) - enough to prove the touch IC and wiring actually work
+// without reworking every screen's input handling. Raw x/y readings print
+// to the Serial Monitor while a touch is held, which is what you'd use to
+// calibrate real coordinate mapping (TOUCH_RAW_X/Y_MIN/MAX below) if this
+// gets built out into a proper touch UI later.
+#define TOUCH_RAW_X_MIN            300
+#define TOUCH_RAW_X_MAX            3800
+#define TOUCH_RAW_Y_MIN            300
+#define TOUCH_RAW_Y_MAX            3800
+#define TOUCH_SWAP_XY              0
+#define TOUCH_INVERT_X             0
+#define TOUCH_INVERT_Y             0
+// Minimum time between separate taps (ms) - prevents one touch registering
+// as several rapid presses.
+#define TOUCH_DEBOUNCE_MS          180
+
+// ===========================================================================
 //  ONBOARD RGB STATUS LED
 // ===========================================================================
 // Most ESP32-S3-DevKitC-1 (N16R8) boards have a single addressable WS2812
@@ -149,7 +189,7 @@
 // Pin is 48 on most current DevKitC-1 boards, 38 on older ones - if it's
 // still lit after flashing, try changing this to 38 (or check your board's
 // schematic/silkscreen for "RGB LED" or "WS2812").
-#define ONBOARD_RGB_LED_PIN        48      // set to -1 if your board has none / you don't want this
+#define ONBOARD_RGB_LED_PIN        -1      // set to -1 if your board has none / you don't want this
 
 // ===========================================================================
 //  AUDIO ANNOUNCEMENTS (I2S amplifier, e.g. MAX98357A, + speaker)
@@ -282,7 +322,7 @@
 #define AIRCRAFT_BLEND_MS           1500
 // Maximum number of aircraft kept (nearest ones win). Each uses ~180 bytes
 // of PSRAM (x3 buffers).
-#define MAX_AIRCRAFT                250
+#define MAX_AIRCRAFT                1000
 // 1 = also show aircraft reported as being on the ground.
 #define SHOW_GROUND_AIRCRAFT        0
 
@@ -315,6 +355,26 @@
 #define DEFAULT_SPEED_UNIT          0   // 0 = knots,          1 = km/h
 
 // ===========================================================================
+//  TRAIN DEPARTURE BOARD (National Rail OpenLDBWS, via the "Switch mode"
+//  button/menu item - toggles the radar screen with a live departure board)
+// ===========================================================================
+// Free self-service token from https://realtime.nationalrail.co.uk/OpenLDBWSRegistration
+// (this is the classic OpenLDBWS SOAP API, not the newer Rail Data
+// Marketplace - keep using an OpenLDBWS token here). Leave "" to disable the
+// train board; "Switch mode" then just stays on the radar screen.
+#define OPENLDBWS_API_TOKEN         ""
+#define OPENLDBWS_ENDPOINT          "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx"
+// 3-letter CRS station code, . Changeable on the
+// device (Advanced menu) and in the web setup portal without reflashing.
+#define TRAIN_DEFAULT_STATION_CRS   "LKX"
+// How often the board is refreshed while it's the active screen (ms).
+#define TRAIN_UPDATE_INTERVAL_MS    30000UL
+// Rows requested from the API / shown on screen.
+#define TRAIN_MAX_ROWS              8
+#define TRAIN_CONNECT_TIMEOUT_MS    6000UL
+#define TRAIN_HTTP_TIMEOUT_MS       10000UL
+
+// ===========================================================================
 //  MISC
 // ===========================================================================
 #define SERIAL_BAUD                 115200
@@ -335,5 +395,10 @@
       FR_PIN_BAD(BUTTON_PIN_HOME) || FR_PIN_BAD(AUDIO_I2S_BCLK_PIN) || \
       FR_PIN_BAD(AUDIO_I2S_LRC_PIN) || FR_PIN_BAD(AUDIO_I2S_DOUT_PIN)
     #error "A GPIO in config.h is not usable on the ESP32-S3 (22-25 do not exist, 26-37 are flash/PSRAM, 19/20 USB, 43/44 UART0). See WIRING.md."
+  #endif
+  #if TOUCH_ENABLED && (FR_PIN_BAD(TOUCH_CLK_PIN) || FR_PIN_BAD(TOUCH_MOSI_PIN) || \
+      FR_PIN_BAD(TOUCH_MISO_PIN) || FR_PIN_BAD(TOUCH_CS_PIN) || \
+      (TOUCH_IRQ_PIN >= 0 && FR_PIN_BAD(TOUCH_IRQ_PIN)))
+    #error "A TOUCH_*_PIN in config.h is not usable on the ESP32-S3. See WIRING.md."
   #endif
 #endif

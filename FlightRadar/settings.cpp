@@ -41,13 +41,19 @@ float settingsRangeNm() {
   return (float)RANGES_NM[i];
 }
 
-// Hash runtime defaults so a config.h change resets saved overrides once.
+// Only reset saved settings when the Settings struct's *shape* changes, not
+// when config.h's *values* change. This used to hash the fully-applied
+// defaults (every WiFi SSID/password, URL, timeout, etc. from config.h), so
+// editing config.h for anything - a new OTA URL, a tweaked timeout, flipping
+// ADSB_MULTI_SOURCE_ENABLED - silently wiped the saved WiFi credentials and
+// home location on the next boot. Now it's just the struct size plus a
+// manually-maintained schema version (bumped in config.h only when a field
+// is actually added/removed/retyped), so ordinary firmware updates keep
+// everything the user configured on the device.
 static uint32_t cfgSignature() {
-  Settings defaults;
-  applyDefaults(defaults);
   uint32_t h = 2166136261u;
-  const uint8_t* bytes = (const uint8_t*)&defaults;
-  for (size_t i = 0; i < sizeof(defaults); ++i) { h ^= bytes[i]; h *= 16777619u; }
+  h ^= (uint32_t)sizeof(Settings);      h *= 16777619u;
+  h ^= (uint32_t)SETTINGS_SCHEMA_VERSION; h *= 16777619u;
   return h;
 }
 
@@ -61,6 +67,7 @@ static void applyDefaults(Settings& s) {
   fr_copy(s.timezone, sizeof(s.timezone), TIMEZONE_POSIX);
   fr_copy(s.audioUrl, sizeof(s.audioUrl), MILITARY_WAV_URL);
   fr_copy(s.adsbCustomUrl, sizeof(s.adsbCustomUrl), ADSB_CUSTOM_URL_FORMAT);
+  fr_copy(s.trainStationCrs, sizeof(s.trainStationCrs), TRAIN_DEFAULT_STATION_CRS);
   s.homeLat = HOME_LAT;
   s.homeLon = HOME_LON;
   s.homeConfigured = settingsHomeValid(HOME_LAT, HOME_LON) &&
@@ -124,6 +131,21 @@ static void sanitize(Settings& s) {
   s.timezone[sizeof(s.timezone) - 1] = 0;
   s.audioUrl[sizeof(s.audioUrl) - 1] = 0;
   s.adsbCustomUrl[sizeof(s.adsbCustomUrl) - 1] = 0;
+  s.trainStationCrs[sizeof(s.trainStationCrs) - 1] = 0;
+  {
+    // CRS codes are always exactly 3 letters - sanitize anything stored or
+    // typed into the portal down to that shape, upper-cased.
+    char clean[4] = {0};
+    uint8_t n = 0;
+    for (const char* p = s.trainStationCrs; *p && n < 3; ++p) {
+      char c = *p;
+      if (c >= 'a' && c <= 'z') c -= 32;
+      if (c >= 'A' && c <= 'Z') clean[n++] = c;
+    }
+    clean[n] = 0;
+    if (n == 3) fr_copy(s.trainStationCrs, sizeof(s.trainStationCrs), clean);
+    else fr_copy(s.trainStationCrs, sizeof(s.trainStationCrs), TRAIN_DEFAULT_STATION_CRS);
+  }
   if (!settingsHomeValid(s.homeLat, s.homeLon)) {
     s.homeLat = (HOME_LAT >= -90.0 && HOME_LAT <= 90.0) ? HOME_LAT : 0.0;
     s.homeLon = (HOME_LON >= -180.0 && HOME_LON <= 180.0) ? HOME_LON : 0.0;
@@ -194,6 +216,7 @@ void settingsSave() {
   p.putString("tz", g_settings.timezone);
   p.putString("wavurl", g_settings.audioUrl);
   p.putString("adscus", g_settings.adsbCustomUrl);
+  p.putString("traincrs", g_settings.trainStationCrs);
   p.putDouble("lat", g_settings.homeLat);
   p.putDouble("lon", g_settings.homeLon);
   p.putUChar("homeok", g_settings.homeConfigured);
@@ -271,6 +294,7 @@ void settingsBegin() {
   p.getString("tz", g_settings.timezone, sizeof(g_settings.timezone));
   p.getString("wavurl", g_settings.audioUrl, sizeof(g_settings.audioUrl));
   p.getString("adscus", g_settings.adsbCustomUrl, sizeof(g_settings.adsbCustomUrl));
+  p.getString("traincrs", g_settings.trainStationCrs, sizeof(g_settings.trainStationCrs));
   g_settings.serialBaud = p.getUInt("baud", g_settings.serialBaud);
   g_settings.wifiConnectTimeoutMs = p.getUInt("wictmo", g_settings.wifiConnectTimeoutMs);
   g_settings.wifiRetryMinMs = p.getUInt("wimin", g_settings.wifiRetryMinMs);
@@ -341,6 +365,12 @@ void settingsResetToUserDefaults() {
 void settingsSetWifi(const char* ssid, const char* pass) {
   fr_copy(g_settings.wifiSsid, sizeof(g_settings.wifiSsid), ssid);
   fr_copy(g_settings.wifiPass, sizeof(g_settings.wifiPass), pass);
+  settingsSave();
+}
+
+void settingsSetTrainStation(const char* crs) {
+  fr_copy(g_settings.trainStationCrs, sizeof(g_settings.trainStationCrs), crs);
+  sanitize(g_settings);   // upper-cases + validates down to 3 letters, or falls back to the default
   settingsSave();
 }
 

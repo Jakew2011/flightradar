@@ -12,9 +12,10 @@
  *   aircraft_route  departure / arrival airport lookup for selected flights
  *   adsb_api   live data download (background task)
  *   wifi_manager  WiFi connection + setup portal + clock
- *   input      encoder / buttons (background task)
+ *   input      encoder / buttons / optional touchscreen (background task)
  *   icons      aircraft symbols
  *   audio      "military aircraft" announcement over I2S (audio_data.h)
+ *   train      National Rail departure board (OpenLDBWS, background task)
  *   ui         screens, menus, event handling
  *
  * Build settings (Tools menu) are listed in README.md.
@@ -30,6 +31,7 @@
 #include "adsb_api.h"
 #include "audio.h"
 #include "update.h"
+#include "train.h"
 #include "ui.h"
 #if ONBOARD_RGB_LED_PIN >= 0
 #include <Adafruit_NeoPixel.h>
@@ -61,6 +63,7 @@ void setup() {
   aircraftRouteInit();
   audioInit();
   updateInit();
+  trainInit();
   uiInit();
   Serial.println(F("Type HELP in the Serial Monitor for setup commands."));
 }

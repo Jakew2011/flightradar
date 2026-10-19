@@ -17,6 +17,7 @@ struct Settings {
   char    timezone[48];
   char    audioUrl[256];
   char    adsbCustomUrl[192];
+  char    trainStationCrs[8];   // 3-letter National Rail CRS code, e.g. "LIT"
   double  homeLat;
   double  homeLon;
   uint8_t homeConfigured;
@@ -74,6 +75,7 @@ void     settingsSave();                        // write everything to flash
 void     settingsFactoryReset();                // erase stored values, reload defaults
 void     settingsResetToUserDefaults();         // firmware defaults, but blank WiFi and coordinates
 void     settingsSetWifi(const char* ssid, const char* pass);   // stores + saves
+void     settingsSetTrainStation(const char* crs);              // validates (3 letters) + saves
 bool     settingsHomeValid(double lat, double lon);
 bool     settingsSetHome(double lat, double lon);               // validates + saves
 void     settingsClearHome();

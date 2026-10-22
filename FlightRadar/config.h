@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "TRANSPORT TRACKER"
-#define FW_VERSION "6.2.1"
+#define FW_VERSION "6.2.5"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in
@@ -199,7 +199,7 @@
 // Pin is 48 on most current DevKitC-1 boards, 38 on older ones - if it's
 // still lit after flashing, try changing this to 38 (or check your board's
 // schematic/silkscreen for "RGB LED" or "WS2812").
-#define ONBOARD_RGB_LED_PIN       -1      // set to -1 if your board has none / you don't want this
+#define ONBOARD_RGB_LED_PIN        48      // set to -1 if your board has none / you don't want this
 
 // ===========================================================================
 //  AUDIO ANNOUNCEMENTS (I2S amplifier, e.g. MAX98357A, + speaker)

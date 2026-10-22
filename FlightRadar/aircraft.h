@@ -67,6 +67,13 @@ bool      aircraftHasSelection();
 const Aircraft* aircraftSelected();
 bool      aircraftEmergencyActive();
 uint16_t  aircraftEmergencySquawk();
+// Lets the radar give control back to the user during an active 7500/7700
+// emergency: the header alert and audio keep going, but the radar stops
+// force-centring/force-zooming on that specific aircraft, so range changes
+// and BACK/HOME work normally again. Re-engages automatically the next time
+// a *different* aircraft (or the same one, after its emergency clears and
+// starts again) squawks an emergency.
+void      aircraftDismissEmergencyFollow();
 
 // Whatever the radar is currently centred on this frame (home, or an active
 // emergency/search-lock aircraft - see aircraftUpdate()). Valid any time

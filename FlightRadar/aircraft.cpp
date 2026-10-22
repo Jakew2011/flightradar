@@ -29,6 +29,8 @@ static bool      s_hasSel = false;
 static uint32_t  s_lastHomeRev = 0;
 static uint32_t  s_emergencyKey = 0;
 static uint16_t  s_emergencySquawk = 0;
+static bool      s_emergencyDismissed = false;    // user pressed BACK/HOME: stop auto-following this one
+static uint32_t  s_emergencyDismissedKey = 0;
 static double    s_mapCenterLat = 0.0, s_mapCenterLon = 0.0;
 static uint32_t  s_mapCenterKey = 0;
 static char      s_lockQuery[9] = "";     // normalized (uppercase, hyphens stripped), "" = no lock set
@@ -189,6 +191,9 @@ bool aircraftPollServiceAnnouncement(AircraftService& outService) {
 
 bool aircraftEmergencyActive() { return s_emergencyKey != 0; }
 uint16_t aircraftEmergencySquawk() { return s_emergencySquawk; }
+void aircraftDismissEmergencyFollow() {
+  if (s_emergencyKey) { s_emergencyDismissed = true; s_emergencyDismissedKey = s_emergencyKey; }
+}
 void aircraftMapCenter(double& lat, double& lon) { lat = s_mapCenterLat; lon = s_mapCenterLon; }
 
 // ---------------------------------------------------------------------------
@@ -259,11 +264,20 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
   s_lockFound = locked != nullptr;
   if (locked) s_lockKey = locked->key;
 
-  // Priority for what the radar centres on: an active 7500/7700 emergency,
-  // then a search-and-lock match, then home.
-  const Aircraft* centerSource = emergency ? emergency : locked;
+  // The header alert / audio always reflect the real emergency state...
   const uint32_t nextEmergencyKey = emergency ? emergency->key : 0;
   const uint16_t nextEmergencySquawk = emergency ? emergency->squawk : 0;
+  if (!emergency) { s_emergencyDismissed = false; s_emergencyDismissedKey = 0; }   // cleared: next one re-engages normally
+
+  // ...but if the user dismissed this specific aircraft's auto-follow (BACK/
+  // HOME while it had the radar locked), don't keep fighting them for centre
+  // control every frame - fall through to a search-lock or home instead.
+  const bool emergencyDismissedForThis = s_emergencyDismissed && emergency && emergency->key == s_emergencyDismissedKey;
+  const Aircraft* effectiveEmergency = emergencyDismissedForThis ? nullptr : emergency;
+
+  // Priority for what the radar centres on: an active (non-dismissed)
+  // 7500/7700 emergency, then a search-and-lock match, then home.
+  const Aircraft* centerSource = effectiveEmergency ? effectiveEmergency : locked;
   const uint32_t nextCenterKey = centerSource ? centerSource->key : 0;
   const double nextCenterLat = centerSource ? centerSource->latitude : g_settings.homeLat;
   const double nextCenterLon = centerSource ? centerSource->longitude : g_settings.homeLon;
@@ -312,15 +326,21 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
     a.selected = s_hasSel && a.key == s_selKey;
     if (a.selected) selFound = true;
     if (a.visible) vis++;
-    if (a.visible && a.military) visMil++;
-    if (a.visible && a.military && !announceOnCooldown(a.key, now)) {
+    if (a.visible && a.military) {
+      visMil++;
+      // Announce once per appearance, not on a repeating timer: as long as
+      // the aircraft stays continuously visible, announceRemember() below
+      // keeps re-extending its cooldown window every pass, so it never
+      // expires and never re-fires. It only actually expires (and so
+      // announces again) once the aircraft has been gone - out of range, out
+      // of the age window, landed, whatever - for a full cooldown period.
+      if (!announceOnCooldown(a.key, now) && s_announcePending < 255) s_announcePending++;
       announceRemember(a.key, now);
-      if (s_announcePending < 255) s_announcePending++;
     }
-    if (a.visible && a.service != SVC_NONE) visSvc++;
-    if (a.visible && a.service != SVC_NONE && !announceOnCooldown(a.key, now)) {
+    if (a.visible && a.service != SVC_NONE) {
+      visSvc++;
+      if (!announceOnCooldown(a.key, now)) serviceQueuePush(a.service);
       announceRemember(a.key, now);
-      serviceQueuePush(a.service);
     }
     s_list[w++] = a;
   }

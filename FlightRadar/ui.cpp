@@ -1331,7 +1331,7 @@ static void bootStep(uint32_t now) {
 // ===========================================================================
 static void drawRadarScreen(uint32_t now) {
   const bool emergency = aircraftEmergencyActive();
-  const float range = emergency ? 5.0f : settingsRangeNm();
+  const float range = settingsRangeNm();   // user's chosen range, always - see the comment in uiUpdate()
   radarRender(now, range);
 
   char left[24], right[12];
@@ -1413,6 +1413,7 @@ void uiHandleEvent(const InputEvent& ev, uint32_t now) {
         case EVT_BACK:
         case EVT_HOME:
           aircraftClearSelection();
+          aircraftDismissEmergencyFollow();   // let go of a 7500/7700 auto-centre lock too, if one's active
           s_mode = MODE_ZOOM;
           break;
         default: break;
@@ -1653,7 +1654,12 @@ void uiUpdate(uint32_t now) {
   // Keep aircraft data fresh (merge / interpolate) about 25 times a second.
   if (now - s_lastAcUpdate >= 40) {
     s_lastAcUpdate = now;
-    aircraftUpdate(now, aircraftEmergencyActive() ? 5.0f : settingsRangeNm());
+    // Always use the range the user has actually chosen - an active 7500/
+    // 7700 emergency used to force a fixed 5 nm view with no way to zoom out
+    // or see what else was around; it now just takes over centring (see
+    // aircraftDismissEmergencyFollow() for how the user can let go of that
+    // too), range stays under normal control the whole time.
+    aircraftUpdate(now, settingsRangeNm());
     if (aircraftEmergencyActive()) {
       const Aircraft* alert = aircraftSelected();
       const uint32_t key = alert ? alert->key : 0;

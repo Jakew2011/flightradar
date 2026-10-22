@@ -1,4 +1,14 @@
-
+/*
+ * config.h - ALL user-changeable settings for the FlightRadar project.
+ *
+ * Edit the values in this file, save, then compile and upload again.
+ *
+ * Runtime-safe options are copied into persistent Settings and can be edited
+ * from the device menu or web portal. Changing a runtime default here changes
+ * the settings signature, so the new firmware defaults replace saved values
+ * once after upload. Hardware pins, display wiring, and memory/layout options
+ * remain build-time-only.
+ */
 #pragma once
 
 #if __has_include(<Arduino.h>)
@@ -17,8 +27,8 @@
   using int64_t  = signed long long;
 #endif
 
-#define FW_NAME    "Transport Tracker"   // shown in the menu, web portal, and OTA update prompt
-#define FW_VERSION "6.1.1"
+#define FW_NAME    "TRANSPORT TRACKER"
+#define FW_VERSION "6.2.1"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in
@@ -37,7 +47,7 @@
 // Leave "" to configure WiFi later using the setup portal.
 #define WIFI_SSID     ""
 #define WIFI_PASSWORD ""
-#define WIFI_HOSTNAME "Transport Tracker"
+#define WIFI_HOSTNAME "TransportTracker"
 
 
 // How long to wait for one connection attempt before giving up (ms).
@@ -53,7 +63,7 @@
 // WIFI_PORTAL_AFTER_FAILS connection attempts after power-up all fail.
 // You can also start it from Menu > WiFi status, or by HOLDING the BACK button
 // while powering up / pressing reset.
-#define WIFI_PORTAL_SSID          "Transport-Setup"
+#define WIFI_PORTAL_SSID          "TransportTracker-Setup"
 // Password for the setup network. "" = open network. If set it must be
 // 8..63 characters.
 #define WIFI_PORTAL_PASSWORD      ""
@@ -78,8 +88,8 @@
 //  RADAR CENTRE (YOUR POSITION)
 // ===========================================================================
 // Decimal degrees. North and East are positive; South and West negative.
-#define HOME_LAT      0.00000000000000      // your latitude  (north +)
-#define HOME_LON      0.00000000000000       // your longitude (east +, west -)
+#define HOME_LAT      0.0000000000000000      // your latitude  (north +)
+#define HOME_LON      0.0000000000000000      // your longitude (east +, west -)
 
 // ===========================================================================
 //  DISPLAY (ST7796S 480x320 module, run in portrait)
@@ -109,7 +119,7 @@
 #define DISPLAY_BRIGHTNESS        80
 
 // Optional automatic night dimming (needs the clock, i.e. WiFi/NTP).
-#define NIGHT_MODE_ENABLED        1
+#define NIGHT_MODE_ENABLED        0
 #define NIGHT_MODE_START_HOUR     22      // 0..23, local time
 #define NIGHT_MODE_END_HOUR       7       // 0..23, local time
 #define NIGHT_MODE_BRIGHTNESS     15      // percent while night mode is active
@@ -152,7 +162,7 @@
 // to talk back) - the touch IC needs a MISO/T_DO line to report touches, so
 // reusing the TFT's bus isn't an option here. Four extra wires, but no risk
 // of the two SPI devices fighting over a bus neither of them fully owns.
-#define TOUCH_ENABLED              1
+#define TOUCH_ENABLED              0
 #define TOUCH_CLK_PIN              1
 #define TOUCH_MOSI_PIN             2       // -> touch IC T_DIN
 #define TOUCH_MISO_PIN             42      // <- touch IC T_DO
@@ -189,7 +199,7 @@
 // Pin is 48 on most current DevKitC-1 boards, 38 on older ones - if it's
 // still lit after flashing, try changing this to 38 (or check your board's
 // schematic/silkscreen for "RGB LED" or "WS2812").
-#define ONBOARD_RGB_LED_PIN        -1      // set to -1 if your board has none / you don't want this
+#define ONBOARD_RGB_LED_PIN       -1      // set to -1 if your board has none / you don't want this
 
 // ===========================================================================
 //  AUDIO ANNOUNCEMENTS (I2S amplifier, e.g. MAX98357A, + speaker)
@@ -245,9 +255,9 @@
 // over WiFi, then reboots into the new firmware. These URLs are never shown
 // or editable on the device - only here.
 //
-// TODO: fill these in once the GitHub repo is ready. Leave either one as ""
-// to disable update checking entirely (the default right now) - nothing
-// else in the firmware depends on this, so it is safe to leave blank.
+// Already pointed at your jakew2011/flightradar GitHub repo below. Leave
+// either one as "" to disable update checking entirely - nothing else in
+// the firmware depends on this, so it is safe to leave blank.
 //
 // To publish a release:
 //   1. Bump FW_VERSION above and commit.
@@ -322,7 +332,7 @@
 #define AIRCRAFT_BLEND_MS           1500
 // Maximum number of aircraft kept (nearest ones win). Each uses ~180 bytes
 // of PSRAM (x3 buffers).
-#define MAX_AIRCRAFT                1000
+#define MAX_AIRCRAFT                250
 // 1 = also show aircraft reported as being on the ground.
 #define SHOW_GROUND_AIRCRAFT        0
 
@@ -346,6 +356,10 @@
 #define LABELS_ENABLED              1
 // Maximum number of labels drawn per frame.
 #define LABEL_MAX                   24
+// 1 = draw small square markers + code for nearby airports/airfields (see
+// the AIRPORTS list in radar.cpp - a scoped-down version of real coastline/
+// lake outlines, which aren't practical to embed as vector data here).
+#define SHOW_AIRPORTS               1
 
 // ===========================================================================
 //  DEFAULT UNITS (changeable in the menu)
@@ -355,16 +369,25 @@
 #define DEFAULT_SPEED_UNIT          0   // 0 = knots,          1 = km/h
 
 // ===========================================================================
-//  TRAIN DEPARTURE BOARD (National Rail OpenLDBWS, via the "Switch mode"
+//  TRAIN DEPARTURE BOARD (National Rail / Rail Data Marketplace, via the "Switch mode"
 //  button/menu item - toggles the radar screen with a live departure board)
 // ===========================================================================
-// Free self-service token from https://realtime.nationalrail.co.uk/OpenLDBWSRegistration
-// (this is the classic OpenLDBWS SOAP API, not the newer Rail Data
-// Marketplace - keep using an OpenLDBWS token here). Leave "" to disable the
-// train board; "Switch mode" then just stays on the radar screen.
-#define OPENLDBWS_API_TOKEN         ""
-#define OPENLDBWS_ENDPOINT          "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx"
-// 3-letter CRS station code, . Changeable on the
+// The old OpenLDBWS self-service registration page is dead; this now goes
+// through the Rail Data Marketplace (raildata.org.uk), a different, plain
+// REST/JSON API (not the old SOAP/XML one) with its own "Consumer key":
+//   1. Register at https://raildata.org.uk/registerPartner (an individual
+//      account is fine) and verify your email.
+//   2. Log in, open the "Live Departure Board" data product:
+//      https://raildata.org.uk/dataProduct/P-d81d6eaf-8060-4467-a339-1c833e50cbbe/overview
+//   3. Click Subscribe (it's free, no usage limit), accept the licence terms.
+//   4. Go to your subscriptions, open "Live Departure Board", click the
+//      "Specification" tab, and scroll to "API access credentials".
+//   5. Copy the "Consumer key" shown there into OPENLDBWS_API_KEY below.
+// Leave "" to disable the train board; "Switch mode" then just stays on the
+// radar screen.
+#define OPENLDBWS_API_KEY           ""
+#define OPENLDBWS_ENDPOINT          "https://api1.raildata.org.uk/1010-live-departure-board-dep1_2/LDBWS/api/20220120/GetDepartureBoard"
+// 3-letter CRS station code, e.g. "LIT" = Littlehampton. Changeable on the
 // device (Advanced menu) and in the web setup portal without reflashing.
 #define TRAIN_DEFAULT_STATION_CRS   "LKX"
 // How often the board is refreshed while it's the active screen (ms).

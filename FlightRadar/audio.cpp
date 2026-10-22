@@ -112,6 +112,9 @@ static constexpr uint32_t AUDIO_NOTIFY_CLIP = 1u;
 static constexpr uint32_t AUDIO_NOTIFY_ALERT = 2u;
 static constexpr uint32_t AUDIO_NOTIFY_TEST = 4u;
 static constexpr uint32_t AUDIO_NOTIFY_ALERT_7700 = 8u;
+static constexpr uint32_t AUDIO_NOTIFY_POLICE = 16u;
+static constexpr uint32_t AUDIO_NOTIFY_COASTGUARD = 32u;
+static constexpr uint32_t AUDIO_NOTIFY_AIRAMB = 64u;
 
 static uint32_t s_i2sWriteCalls = 0;
 static uint32_t s_i2sBytesWritten = 0;
@@ -188,17 +191,45 @@ static bool playEmergencyTone() {
   return playTone(1000, 120, 6000);
 }
 
-// Squawk 7700 specifically: loud, hard to miss, 2 s beep / 1 s silence,
-// repeating until 5 s of total beeping time has been played (2s on, 1s off,
-// 2s on, 1s off, 1s on = 5s on / 2s off, ~7s overall). Deliberately not
-// interruptible mid-pattern - this *is* the emergency alert.
+// Squawk 7700 specifically: loud, hard to miss, 3 full cycles of a 2 s beep
+// followed by a 1 s silence (9 s total). Deliberately not interruptible
+// mid-pattern - this *is* the emergency alert.
 static bool playEmergency7700Pattern() {
-  uint32_t beepBudgetMs = 5000;
-  while (beepBudgetMs > 0) {
-    const uint16_t thisBeepMs = (uint16_t)((beepBudgetMs > 2000) ? 2000 : beepBudgetMs);
-    if (!playTone(1000, thisBeepMs, 20000)) return false;
-    beepBudgetMs -= thisBeepMs;
-    if (beepBudgetMs > 0) vTaskDelay(pdMS_TO_TICKS(1000));
+  for (uint8_t cycle = 0; cycle < 3; ++cycle) {
+    if (!playTone(1000, 2000, 20000)) return false;
+    if (cycle < 2) vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+  return true;
+}
+
+// Three short, distinct tones for police / coastguard / air ambulance - each
+// deliberately different in shape from the above and from each other so
+// they're recognisable by ear alone.
+static bool playPoliceTone() {
+  // Two-tone "yelp" alternation, 3 cycles - evokes a UK police siren without
+  // trying to be a literal recording of one.
+  for (uint8_t i = 0; i < 3; ++i) {
+    if (!playTone(900, 180, 14000)) return false;
+    if (!playTone(1300, 180, 14000)) return false;
+  }
+  return true;
+}
+
+static bool playCoastguardTone() {
+  // Three descending tones, once - a falling "all clear"-style sweep.
+  if (!playTone(1200, 220, 14000)) return false;
+  if (!playTone(900, 220, 14000)) return false;
+  if (!playTone(650, 260, 14000)) return false;
+  return true;
+}
+
+static bool playAirAmbulanceTone() {
+  // Two pairs of quick double-beeps, like a medical monitor.
+  for (uint8_t i = 0; i < 2; ++i) {
+    if (!playTone(1000, 150, 14000)) return false;
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (!playTone(1000, 150, 14000)) return false;
+    if (i == 0) vTaskDelay(pdMS_TO_TICKS(300));
   }
   return true;
 }
@@ -302,6 +333,9 @@ static void audioTask(void*) {
                (int)((requests & AUDIO_NOTIFY_CLIP) != 0));
     if (requests & AUDIO_NOTIFY_ALERT_7700) playEmergency7700Pattern();
     if (requests & AUDIO_NOTIFY_ALERT) playEmergencyTone();
+    if (requests & AUDIO_NOTIFY_POLICE) playPoliceTone();
+    if (requests & AUDIO_NOTIFY_COASTGUARD) playCoastguardTone();
+    if (requests & AUDIO_NOTIFY_AIRAMB) playAirAmbulanceTone();
     if (requests & AUDIO_NOTIFY_TEST) {
       Serial.println("[audio] speaker test requested; playing 500 Hz test tone now");
       const bool ok = playTone(500, 1000, 18000);
@@ -467,6 +501,21 @@ bool audioTestSpeaker() {
 void audioPlayEmergencyBeep() {
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_ALERT, eSetBits) != pdPASS)
     Serial.println("[audio] emergency beep unavailable: audio task is not ready");
+}
+
+void audioPlayPolice() {
+  if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_POLICE, eSetBits) != pdPASS)
+    Serial.println("[audio] police tone unavailable: audio task is not ready");
+}
+
+void audioPlayCoastguard() {
+  if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_COASTGUARD, eSetBits) != pdPASS)
+    Serial.println("[audio] coastguard tone unavailable: audio task is not ready");
+}
+
+void audioPlayAirAmbulance() {
+  if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_AIRAMB, eSetBits) != pdPASS)
+    Serial.println("[audio] air ambulance tone unavailable: audio task is not ready");
 }
 
 void audioPlayEmergency7700() {

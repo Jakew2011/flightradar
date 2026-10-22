@@ -219,6 +219,10 @@ static bool adsbIngestElement(JsonDocument& doc, Aircraft& a, double homeLat, do
 
   const int dbFlags = doc["dbFlags"] | 0;
   a.cls = aircraftClassify(doc["category"] | "", a.aircraftType, a.callsign, (dbFlags & 1) != 0, &a.military);
+  // Military already covers RAF/police-air-support-adjacent squawks etc; only
+  // check for police/coastguard/air-ambulance on everything else so a given
+  // aircraft never ends up flagged as both.
+  a.service = a.military ? SVC_NONE : aircraftClassifyService(a.callsign, a.registration);
   if (g_settings.debugAircraftTypes)
     Serial.printf("[adsb] %s type=%-4s cat=%-2s callsign=%-8s military=%d\n",
                   a.icao, a.aircraftType, (const char*)(doc["category"] | ""), a.callsign, a.military);
@@ -405,6 +409,8 @@ static void mergeFields(Aircraft& preferred, const Aircraft& other) {
   }
   preferred.military = preferred.military || other.military;
   if (preferred.military) preferred.cls = AC_MILITARY;
+  if (preferred.service == SVC_NONE) preferred.service = other.service;
+  if (preferred.military) preferred.service = SVC_NONE;
 }
 
 static void mergeFeedAircraft(Aircraft* combined, uint16_t& combinedCount,
@@ -480,13 +486,15 @@ static void adsbTask(void*) {
   Aircraft* feedCache = (Aircraft*)aircraftAllocLarge(
     sizeof(Aircraft) * MAX_AIRCRAFT * ADSB_FEED_COUNT);
   Aircraft* alertCache = (Aircraft*)aircraftAllocLarge(sizeof(Aircraft) * MAX_AIRCRAFT * 2);
-  if (!stage || !feedStage || !feedCache || !alertCache) {
+  Aircraft* alertMerge = (Aircraft*)aircraftAllocLarge(sizeof(Aircraft) * MAX_AIRCRAFT);
+  if (!stage || !feedStage || !feedCache || !alertCache || !alertMerge) {
     setStatus(false, 0, 0, "NO MEMORY");
     Serial.println("[adsb] out of memory, task stopped");
     free(stage);
     free(feedStage);
     free(feedCache);
     free(alertCache);
+    free(alertMerge);
     vTaskDelete(nullptr);
     return;
   }
@@ -561,41 +569,52 @@ static void adsbTask(void*) {
       }
     }
 
-    // Use the squawk endpoint of whichever feed is actually configured/active, not a
-    // hardcoded provider - each site's squawk-lookup path differs (and if you're not
-    // using adsb.lol, hitting its endpoint anyway just gets rate-limited/blocked - this
-    // is what was causing a 403 here even after ADSB_SOURCE was switched to adsb.fi).
-    const size_t sqkFeedIndex = (firstFeed < ADSB_FEED_COUNT) ? firstFeed : 0;
-    const char* sqkUrlFormat = ADSB_FEEDS[sqkFeedIndex].sqkUrlFormat;
+    // Query every feed that's actually active (not just one hardcoded provider) for
+    // this cycle's squawk and merge whatever comes back. Querying only feed[0] meant
+    // that in "both" mode, emergency detection lived or died on adsb.lol alone even
+    // though adsb.fi was also configured and working - and adsb.lol is the one that's
+    // been seen flaking with 429/503. Any feed with no known squawk-lookup path (the
+    // "custom" source) is skipped quietly rather than spamming a failure every cycle.
     const uint16_t alertSquawk = nextAlertIndex == 0 ? 7500 : 7700;
     uint16_t alertCount = 0;
     int alertHttp = 0;
-    char alertError[24] = {0};
-    if (!sqkUrlFormat) {
-      // "custom" source has no known squawk-lookup path - skip quietly rather than
-      // spamming a failure every cycle for a request we know can't succeed.
-      nextAlertIndex = (uint8_t)((nextAlertIndex + 1) % 2);
-    } else {
-      const FetchResult alertResult = doFetch(feedStage, alertCount, filter, doc, nullptr, lat, lon, 250,
-        alertHttp, alertError, sizeof(alertError), alertSquawk, sqkUrlFormat);
+    bool alertAnyOk = false;
+    bool triedAnyFeed = false;
+    for (size_t i = firstFeed; i < endFeed; ++i) {
+      const char* sqkUrlFormat = ADSB_FEEDS[i].sqkUrlFormat;
+      if (!sqkUrlFormat) continue;
+      triedAnyFeed = true;
+      uint16_t thisCount = 0;
+      int http = 0;
+      char err[24] = {0};
+      const FetchResult alertResult = doFetch(feedStage, thisCount, filter, doc, nullptr, lat, lon, 250,
+        http, err, sizeof(err), alertSquawk, sqkUrlFormat);
       doc.clear();
       if (alertResult == FETCH_OK) {
-        Aircraft* cache = alertCache + nextAlertIndex * MAX_AIRCRAFT;
-        if (alertCount) memcpy(cache, feedStage, sizeof(Aircraft) * alertCount);
-        alertCounts[nextAlertIndex] = alertCount;
-        alertUpdatedMs[nextAlertIndex] = millis();
-        alertValid[nextAlertIndex] = true;
-        anyFeedOk = true;
-        lastHttp = alertHttp;
+        mergeFeedAircraft(alertMerge, alertCount, feedStage, thisCount);
+        alertAnyOk = true;
+        alertHttp = http;
         Serial.printf("[adsb] global squawk %u OK: %u aircraft (%s)\n",
-                      (unsigned)alertSquawk, (unsigned)alertCount, ADSB_FEEDS[sqkFeedIndex].name);
+                      (unsigned)alertSquawk, (unsigned)thisCount, ADSB_FEEDS[i].name);
       } else {
         anyRateLimited = anyRateLimited || alertResult == FETCH_RATE;
-        Serial.printf("[adsb] global squawk %u failed: %s (%s); retaining recent reports\n",
-                      (unsigned)alertSquawk, alertError, ADSB_FEEDS[sqkFeedIndex].name);
+        Serial.printf("[adsb] global squawk %u failed: %s (%s)\n",
+                      (unsigned)alertSquawk, err, ADSB_FEEDS[i].name);
       }
-      nextAlertIndex = (uint8_t)((nextAlertIndex + 1) % 2);
     }
+    if (triedAnyFeed && alertAnyOk) {
+      Aircraft* cache = alertCache + nextAlertIndex * MAX_AIRCRAFT;
+      if (alertCount) memcpy(cache, alertMerge, sizeof(Aircraft) * alertCount);
+      alertCounts[nextAlertIndex] = alertCount;
+      alertUpdatedMs[nextAlertIndex] = millis();
+      alertValid[nextAlertIndex] = true;
+      anyFeedOk = true;
+      lastHttp = alertHttp;
+    } else if (triedAnyFeed) {
+      Serial.printf("[adsb] global squawk %u: all feeds failed this cycle; retaining recent reports\n",
+                    (unsigned)alertSquawk);
+    }
+    nextAlertIndex = (uint8_t)((nextAlertIndex + 1) % 2);
 
     const uint32_t combinedAt = millis();
     for (size_t i = firstFeed; i < endFeed; ++i) {

@@ -19,6 +19,7 @@ static Aircraft* s_pending = nullptr;
 static uint16_t  s_count = 0;
 static uint16_t  s_visible = 0;
 static uint16_t  s_visibleMilitary = 0;
+static uint16_t  s_visibleService = 0;
 static uint16_t  s_pendingCount = 0;
 static uint32_t  s_pendingHomeRev = 0;
 static volatile bool s_pendingReady = false;
@@ -30,6 +31,9 @@ static uint32_t  s_emergencyKey = 0;
 static uint16_t  s_emergencySquawk = 0;
 static double    s_mapCenterLat = 0.0, s_mapCenterLon = 0.0;
 static uint32_t  s_mapCenterKey = 0;
+static char      s_lockQuery[9] = "";     // normalized (uppercase, hyphens stripped), "" = no lock set
+static uint32_t  s_lockKey = 0;           // last-matched aircraft's key, valid only while s_lockFound
+static bool      s_lockFound = false;     // true once s_lockQuery actually matched a visible-in-range aircraft
 
 void* aircraftAllocLarge(size_t bytes) {
   void* p = nullptr;
@@ -56,6 +60,7 @@ Aircraft* aircraftList() { return s_list; }
 uint16_t aircraftCount() { return s_list ? s_count : 0; }
 uint16_t aircraftVisibleCount() { return s_visible; }
 uint16_t aircraftVisibleMilitaryCount() { return s_visibleMilitary; }
+uint16_t aircraftVisibleServiceCount() { return s_visibleService; }
 
 void aircraftSubmit(const Aircraft* list, uint16_t count, uint32_t homeRev) {
   if (!s_pending || !s_mutex) return;
@@ -157,8 +162,66 @@ bool aircraftPollAnnouncement() {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+//  Emergency-service announcement (police / coastguard / air ambulance).
+//  Shares the military announcement's per-aircraft cooldown table (a given
+//  key is never both military and a service aircraft) but needs to remember
+//  *which* service it was so loop() can play the matching tone, so it gets
+//  its own small FIFO queue instead of a plain pending counter.
+// ---------------------------------------------------------------------------
+static AircraftService s_serviceQueue[8];
+static uint8_t s_serviceQueueHead = 0, s_serviceQueueTail = 0, s_serviceQueueCount = 0;
+
+static void serviceQueuePush(AircraftService svc) {
+  if (s_serviceQueueCount >= 8) return;          // queue full: drop rather than block, rare
+  s_serviceQueue[s_serviceQueueTail] = svc;
+  s_serviceQueueTail = (uint8_t)((s_serviceQueueTail + 1) % 8);
+  s_serviceQueueCount++;
+}
+
+bool aircraftPollServiceAnnouncement(AircraftService& outService) {
+  if (s_serviceQueueCount == 0) return false;
+  outService = s_serviceQueue[s_serviceQueueHead];
+  s_serviceQueueHead = (uint8_t)((s_serviceQueueHead + 1) % 8);
+  s_serviceQueueCount--;
+  return true;
+}
+
 bool aircraftEmergencyActive() { return s_emergencyKey != 0; }
 uint16_t aircraftEmergencySquawk() { return s_emergencySquawk; }
+void aircraftMapCenter(double& lat, double& lon) { lat = s_mapCenterLat; lon = s_mapCenterLon; }
+
+// ---------------------------------------------------------------------------
+//  Callsign/registration search-and-lock. Mirrors the emergency centring
+//  mechanism above but at lower priority (an active 7500/7700 emergency
+//  always wins the radar's centre) - see the nextCenterKey/centerSource
+//  logic in aircraftUpdate() below.
+// ---------------------------------------------------------------------------
+static void normalizeLockToken(char* out, size_t n, const char* in) {
+  size_t o = 0;
+  for (size_t i = 0; in && in[i] && o + 1 < n; i++) {
+    char c = in[i];
+    if (c == '-' || c == ' ') continue;          // registrations like "G-ABCD" enter/compare without the hyphen
+    out[o++] = (char)toupper((unsigned char)c);
+  }
+  out[o] = 0;
+}
+
+void aircraftLockSearch(const char* query) {
+  normalizeLockToken(s_lockQuery, sizeof(s_lockQuery), query);
+  s_lockKey = 0;
+  s_lockFound = false;
+}
+
+void aircraftClearLock() {
+  s_lockQuery[0] = 0;
+  s_lockKey = 0;
+  s_lockFound = false;
+}
+
+bool aircraftLockActive() { return s_lockFound; }
+bool aircraftLockPending() { return s_lockQuery[0] != 0 && !s_lockFound; }
+const char* aircraftLockQuery() { return s_lockQuery; }
 
 void aircraftUpdate(uint32_t now, float rangeNm) {
   if (!s_list) return;
@@ -179,11 +242,32 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
     if (emergency->squawk == 7700) break;
   }
 
+  // Search-and-lock re-resolves every pass (not just when the query changes)
+  // so it picks up a matching aircraft the moment it appears, even after a
+  // prior disappearance/re-appearance.
+  const Aircraft* locked = nullptr;
+  if (s_lockQuery[0]) {
+    for (uint16_t i = 0; i < s_count; ++i) {
+      const Aircraft& a = s_list[i];
+      if ((uint32_t)(now - a.reportMs) > g_settings.aircraftMaxAgeMs) continue;
+      char csNorm[16], regNorm[16];
+      normalizeLockToken(csNorm, sizeof(csNorm), a.callsign);
+      normalizeLockToken(regNorm, sizeof(regNorm), a.registration);
+      if (!strcmp(csNorm, s_lockQuery) || !strcmp(regNorm, s_lockQuery)) { locked = &a; break; }
+    }
+  }
+  s_lockFound = locked != nullptr;
+  if (locked) s_lockKey = locked->key;
+
+  // Priority for what the radar centres on: an active 7500/7700 emergency,
+  // then a search-and-lock match, then home.
+  const Aircraft* centerSource = emergency ? emergency : locked;
   const uint32_t nextEmergencyKey = emergency ? emergency->key : 0;
   const uint16_t nextEmergencySquawk = emergency ? emergency->squawk : 0;
-  const double nextCenterLat = emergency ? emergency->latitude : g_settings.homeLat;
-  const double nextCenterLon = emergency ? emergency->longitude : g_settings.homeLon;
-  const bool centerChanged = nextEmergencyKey != s_mapCenterKey ||
+  const uint32_t nextCenterKey = centerSource ? centerSource->key : 0;
+  const double nextCenterLat = centerSource ? centerSource->latitude : g_settings.homeLat;
+  const double nextCenterLon = centerSource ? centerSource->longitude : g_settings.homeLon;
+  const bool centerChanged = nextCenterKey != s_mapCenterKey ||
     fabs(nextCenterLat - s_mapCenterLat) > 0.000001 ||
     fabs(nextCenterLon - s_mapCenterLon) > 0.000001;
   if (centerChanged || listChanged) {
@@ -194,19 +278,19 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
       s_list[i].y = s_list[i].y0;
     }
   }
-  if (s_emergencyKey && !nextEmergencyKey && s_hasSel && s_selKey == s_emergencyKey)
+  if (s_mapCenterKey && !nextCenterKey && s_hasSel && s_selKey == s_mapCenterKey)
     s_hasSel = false;
   s_emergencyKey = nextEmergencyKey;
   s_emergencySquawk = nextEmergencySquawk;
-  s_mapCenterKey = nextEmergencyKey;
+  s_mapCenterKey = nextCenterKey;
   s_mapCenterLat = nextCenterLat;
   s_mapCenterLon = nextCenterLon;
-  if (emergency) {
-    s_selKey = emergency->key;
+  if (centerSource) {
+    s_selKey = centerSource->key;
     s_hasSel = true;
   }
 
-  uint16_t w = 0, vis = 0, visMil = 0;
+  uint16_t w = 0, vis = 0, visMil = 0, visSvc = 0;
   bool selFound = false;
   for (uint16_t i = 0; i < s_count; i++) {
     Aircraft a = s_list[i];
@@ -222,8 +306,9 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
       a.bearing = 0;                                        // exactly at centre: no division
     }
     const bool emergency = a.squawk == 7500 || a.squawk == 7700;
-    a.visible = (a.distance <= rangeNm || emergency) &&
-                (g_settings.showGroundAircraft || !a.onGround || emergency);
+    const bool isLocked = s_lockFound && a.key == s_lockKey;
+    a.visible = (a.distance <= rangeNm || emergency || isLocked) &&
+                (g_settings.showGroundAircraft || !a.onGround || emergency || isLocked);
     a.selected = s_hasSel && a.key == s_selKey;
     if (a.selected) selFound = true;
     if (a.visible) vis++;
@@ -232,11 +317,17 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
       announceRemember(a.key, now);
       if (s_announcePending < 255) s_announcePending++;
     }
+    if (a.visible && a.service != SVC_NONE) visSvc++;
+    if (a.visible && a.service != SVC_NONE && !announceOnCooldown(a.key, now)) {
+      announceRemember(a.key, now);
+      serviceQueuePush(a.service);
+    }
     s_list[w++] = a;
   }
   s_count = w;
   s_visible = vis;
   s_visibleMilitary = visMil;
+  s_visibleService = visSvc;
   if (s_hasSel && !selFound) s_hasSel = false;              // selected aircraft vanished
 }
 
@@ -244,7 +335,7 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
 //  Selection
 // ---------------------------------------------------------------------------
 bool aircraftHasSelection() { return s_hasSel; }
-void aircraftClearSelection() { s_hasSel = false; }
+void aircraftClearSelection() { s_hasSel = false; aircraftClearLock(); }
 
 const Aircraft* aircraftSelected() {
   if (!s_hasSel || !s_list) return nullptr;
@@ -259,6 +350,7 @@ bool aircraftSelectNearest() {
     if (s_list[i].visible && s_list[i].distance < bd) { bd = s_list[i].distance; best = i; }
   }
   if (best < 0) return false;
+  aircraftClearLock();            // a manual selection takes over from any active search-lock
   s_selKey = s_list[best].key;
   s_hasSel = true;
   return true;
@@ -280,6 +372,7 @@ bool aircraftCycle(int dir) {
   int next;
   if (pos < 0) next = 0;
   else next = (pos + (dir >= 0 ? 1 : -1) + (int)n) % (int)n;
+  aircraftClearLock();            // a manual selection takes over from any active search-lock
   s_selKey = s_list[order[next]].key;
   s_hasSel = true;
   return true;
@@ -385,6 +478,46 @@ AircraftClass aircraftClassify(const char* category, const char* type, const cha
 const char* aircraftOperatorFromCallsign(const char* cs) {
   const OpEntry* op = operatorLookup(cs);
   return op ? op->name : nullptr;
+}
+
+// ---------------------------------------------------------------------------
+//  Emergency-service detection (best effort - UK-centric, like the historic-
+//  warbird list above). Matched by callsign prefix (how these units usually
+//  identify over ADS-B) and, as a fallback, registration prefix. If a real
+//  unit doesn't trigger, turn on DEBUG_PRINT_AIRCRAFT_TYPES in config.h,
+//  watch the Serial Monitor for the callsign/registration it actually
+//  reports, and add it to the lists below.
+// ---------------------------------------------------------------------------
+static const char* const POLICE_CALLSIGN[]     = {"POLICE", "NPAS"};
+static const char* const POLICE_REG[]          = {"G-POLA", "G-POLB", "G-POLC", "G-POLD", "G-NPAS"};
+static const char* const COASTGUARD_CALLSIGN[] = {"RESCUE", "COASTGUARD", "COSTGD"};
+static const char* const COASTGUARD_REG[]      = {"G-MCG"};
+static const char* const AIRAMB_CALLSIGN[]     = {"HELIMED", "AIRAMB", "HEMS"};
+static const char* const AIRAMB_REG[]          = {"G-HEMS", "G-HAAT", "G-HAAN", "G-HAAC", "G-WAAC", "G-NAAC",
+                                                   "G-SSAA", "G-EHMS", "G-MAAC", "G-YORA", "G-KAAT"};
+
+AircraftService aircraftClassifyService(const char* callsign, const char* registration) {
+  if (!callsign) callsign = "";
+  if (!registration) registration = "";
+  // Coastguard and air ambulance checked first: their callsign prefixes are
+  // more specific, and "RESCUE"/"HELIMED" should never fall through to the
+  // looser "POLICE" check.
+  if (prefixIn(callsign, COASTGUARD_CALLSIGN, N(COASTGUARD_CALLSIGN)) ||
+      prefixIn(registration, COASTGUARD_REG, N(COASTGUARD_REG))) return SVC_COASTGUARD;
+  if (prefixIn(callsign, AIRAMB_CALLSIGN, N(AIRAMB_CALLSIGN)) ||
+      prefixIn(registration, AIRAMB_REG, N(AIRAMB_REG))) return SVC_AIR_AMBULANCE;
+  if (prefixIn(callsign, POLICE_CALLSIGN, N(POLICE_CALLSIGN)) ||
+      prefixIn(registration, POLICE_REG, N(POLICE_REG))) return SVC_POLICE;
+  return SVC_NONE;
+}
+
+const char* aircraftServiceName(AircraftService svc) {
+  switch (svc) {
+    case SVC_POLICE:        return "POLICE";
+    case SVC_COASTGUARD:    return "COASTGUARD";
+    case SVC_AIR_AMBULANCE: return "AIR AMBULANCE";
+    default:                return "";
+  }
 }
 
 const char* aircraftDisplayName(const Aircraft& a) {

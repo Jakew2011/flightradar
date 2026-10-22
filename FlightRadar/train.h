@@ -1,8 +1,10 @@
 // train.h - live National Rail departure board for one station, fetched in
-// the background over OpenLDBWS (SOAP/XML), shown on the "Switch mode"
-// screen in place of the radar. Station CRS code is in g_settings
-// (settings.h), changeable on-device and from the web setup portal, so no
-// reflash is needed to point this at a different station.
+// the background from the Rail Data Marketplace's Live Departure Board API
+// (REST/JSON, the current replacement for the retired OpenLDBWS SOAP
+// service), shown on the "Switch mode" screen in place of the radar.
+// Station CRS code is in g_settings (settings.h), changeable on-device and
+// from the web setup portal, so no reflash is needed to point this at a
+// different station.
 #pragma once
 #include <stdint.h>
 #include "config.h"
@@ -34,4 +36,4 @@ void     trainSetActive(bool active);    // only polls the API while the train s
 void     trainRequestNow();              // force an immediate refresh (e.g. switching stations)
 void     trainGetStatus(TrainStatus& out);
 uint16_t trainGetServices(TrainService* out, uint16_t maxOut);
-bool     trainIsConfigured();            // true once config.h has an OPENLDBWS_API_TOKEN
+bool     trainIsConfigured();            // true once config.h has an OPENLDBWS_API_KEY

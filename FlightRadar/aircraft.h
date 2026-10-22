@@ -8,6 +8,15 @@ enum AircraftClass : uint8_t {
   AC_AIRLINER = 0, AC_HELICOPTER, AC_LIGHT, AC_MILITARY, AC_UNKNOWN, AC_CLASS_COUNT
 };
 
+// Best-effort UK emergency-service detection (callsign/registration pattern
+// matching - see classifyService() in aircraft.cpp). Independent of
+// AircraftClass: a police/coastguard/air-ambulance aircraft still shows as
+// AC_HELICOPTER (or whatever it really is) on the radar, this just adds a
+// distinct audio alert and header count.
+enum AircraftService : uint8_t {
+  SVC_NONE = 0, SVC_POLICE, SVC_COASTGUARD, SVC_AIR_AMBULANCE
+};
+
 struct Aircraft {
   double   latitude, longitude;     // last reported position
   uint32_t key;                     // 24-bit ICAO address as a number (0 = invalid)
@@ -31,6 +40,7 @@ struct Aircraft {
   bool     hasAltitude, hasSpeed, hasHeading, onGround, military;
   bool     visible, selected;
   AircraftClass cls;
+  AircraftService service;
 };
 
 void  aircraftInit();                                   // allocate buffers
@@ -47,6 +57,7 @@ Aircraft* aircraftList();
 uint16_t  aircraftCount();
 uint16_t  aircraftVisibleCount();
 uint16_t  aircraftVisibleMilitaryCount();
+uint16_t  aircraftVisibleServiceCount();                // police + coastguard + air ambulance, combined
 
 // Selection (by ICAO address, survives list updates).
 bool      aircraftSelectNearest();          // nearest visible to radar centre
@@ -57,6 +68,26 @@ const Aircraft* aircraftSelected();
 bool      aircraftEmergencyActive();
 uint16_t  aircraftEmergencySquawk();
 
+// Whatever the radar is currently centred on this frame (home, or an active
+// emergency/search-lock aircraft - see aircraftUpdate()). Valid any time
+// after aircraftUpdate() has run at least once; for drawing anything else
+// (airport markers, etc.) in the same east/north frame the aircraft list uses.
+void aircraftMapCenter(double& lat, double& lon);
+
+// Search-and-lock by callsign or registration (case-insensitive; hyphens in
+// a registration are ignored both when entering and matching - "G-ABCD" and
+// "GABCD" are the same query). The query is remembered and re-checked every
+// aircraftUpdate(), so it locks on the moment a matching aircraft appears,
+// even after it was out of range or momentarily lost. While locked, the
+// radar centres on that aircraft (emergency squawks still take priority) and
+// it's auto-selected, same as the emergency behaviour. Any manual selection
+// (aircraftSelectNearest/aircraftCycle/aircraftClearSelection) clears the lock.
+void        aircraftLockSearch(const char* query);   // up to 8 significant characters
+void        aircraftClearLock();
+bool        aircraftLockActive();     // true once the query has actually matched an aircraft
+bool        aircraftLockPending();    // true while a query is set but hasn't matched (yet)
+const char* aircraftLockQuery();      // current query as entered/normalized, "" if none
+
 // Helpers used while parsing. dbFlagMilitary comes from the ADS-B "dbFlags"
 // bit; the function ORs in category, historic warbird types and known
 // military operators, and reports the combined result via *outMilitary
@@ -66,8 +97,19 @@ AircraftClass aircraftClassify(const char* category, const char* type, const cha
 const char*   aircraftOperatorFromCallsign(const char* callsign);   // nullptr if unknown
 const char*   aircraftDisplayName(const Aircraft& a);               // callsign / reg / icao
 
+// Best-effort UK police / coastguard / air-ambulance detection from the
+// callsign and/or registration (whichever the feed provided). Independent of
+// aircraftClassify() - call separately once both fields are populated.
+AircraftService aircraftClassifyService(const char* callsign, const char* registration);
+const char*     aircraftServiceName(AircraftService svc);          // "POLICE" / "COASTGUARD" / "AIR AMBULANCE" / ""
+
 // Called once per aircraftUpdate(). Returns true (and should be called again)
 // once per aircraft that just became visible, is military, and has not been
 // announced in the last MILITARY_ANNOUNCE_COOLDOWN_MS - drain it in loop()
 // and play the announcement sound for each true it returns.
 bool aircraftPollAnnouncement();
+
+// Same idea as aircraftPollAnnouncement(), for police/coastguard/air-ambulance
+// aircraft: drain in loop() and play the matching audioPlay*() tone for each
+// AircraftService it returns.
+bool aircraftPollServiceAnnouncement(AircraftService& outService);

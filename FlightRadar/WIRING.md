@@ -9,7 +9,7 @@ Encoder: **KY-040**. Audio: **MAX98357A I2S amp + 4 ohm 3 W speaker**.
 
 This file (and `config.h` / `extras/User_Setup.h` in this ZIP) matches the
 wiring diagram you sent - I did **not** ask you to rewire anything; I updated
-the firmware's pin numbers to match your diagram instead. All 15 assigned
+the firmware's pin numbers to match your diagram instead. All 15 required (plus 4 optional touchscreen) assigned
 GPIOs were checked against the ESP32-S3's reserved pins (USB, PSRAM/flash,
 UART0, strapping, non-existent) and there are no conflicts.
 
@@ -29,7 +29,7 @@ UART0, strapping, non-existent) and there are no conflicts.
 | SCK | GPIO12 | `TFT_SCLK` |
 | LED (BLK) | GPIO13 | `TFT_BLK_PIN` (backlight, PWM dimmed) |
 | SDO (MISO) | not connected | display is write-only |
-| T_CS, T_DIN, T_DO, T_CLK (touch) | not connected | non-touch module |
+| T_CS, T_DIN, T_DO, T_CLK (touch) | see section 1a below if your module has a touch controller | leave unconnected on a non-touch module |
 | SD_CS | not connected | on-board SD slot not used |
 
 **Caution on VCC -> 5V:** this is correct *only if your module has an onboard
@@ -39,6 +39,45 @@ have one, its logic will be running above 3.3 V and could be damaged long
 term - in that case connect VCC to **3V3** instead. I can't inspect the board
 myself, so please double-check against its listing/datasheet before powering
 it up.
+
+## 1a. Touchscreen (XPT2046-style resistive touch, optional)
+
+You ordered a non-touch panel, but the board you received has a touch
+controller IC and breaks the T_CS/T_DIN/T_DO/T_CLK pins out to the header -
+this wires that up so you can test it. It's on its **own, separate SPI bus**
+(not shared with the display's bus above), and it's **off by default**:
+nothing is read from these pins unless you set `TOUCH_ENABLED` to `1` in
+`config.h`.
+
+| Touch pin | ESP32-S3 pin | config.h name |
+|---|---|---|
+| T_CLK | GPIO1 | `TOUCH_CLK_PIN` |
+| T_DIN (touch MOSI - ESP32 writes to it) | GPIO2 | `TOUCH_MOSI_PIN` |
+| T_DO (touch MISO - ESP32 reads from it) | GPIO42 | `TOUCH_MISO_PIN` |
+| T_CS | GPIO14 | `TOUCH_CS_PIN` |
+| T_IRQ | not connected | `TOUCH_IRQ_PIN` is `-1` (not wired) - the firmware polls instead of waiting for an interrupt, which is fine at this screen size |
+
+T_CLK/T_DIN/T_DO/T_CS are a bit-banged SPI link (no library), so there's no
+hardware-SPI-bus conflict with the display even though both are technically
+"SPI" - they just need four free GPIOs each, which they have.
+
+After wiring, set `TOUCH_ENABLED 1` in `config.h` and re-upload. There's no
+dedicated touch-test screen - this is wired as a minimal test mode on top of
+the existing encoder/button UI, not a full touch UI: **tap anywhere on the
+panel** and it acts like a short press of the encoder button (select/confirm/
+next on whatever screen is showing); **hold a tap** and it acts like a long
+press (opens the menu). That's enough to prove the touch IC and wiring
+actually work without rewriting every screen's input handling. Open the
+Serial Monitor at your configured baud (115200 by default) while you tap -
+it prints `[touch] raw x=... y=...` the whole time a touch is held. If
+nothing prints while you're pressing the glass, the wiring (most likely
+T_DIN/T_DO swapped, or T_CS not on GPIO14) is the first thing to re-check; if
+numbers print but taps don't do anything in the UI, check `TOUCH_DEBOUNCE_MS`
+and that you're releasing the tap (it fires on release, not on touch-down).
+The `TOUCH_RAW_X/Y_MIN/MAX`, `TOUCH_SWAP_XY` and `TOUCH_INVERT_X/Y` values in
+`config.h` are reserved for a future coordinate-mapped touch UI and aren't
+used by anything yet - ignore them for now, there's nothing to calibrate for
+this tap/hold test mode.
 
 ## 2. Rotary encoder (KY-040)
 
@@ -155,7 +194,7 @@ Check in this order:
 | 22-25 | do not exist on the ESP32-S3 |
 
 The firmware's `config.h` refuses to compile if any assigned pin above lands
-on this list - all 15 pins in this diagram already passed that check.
+on this list - all 15 required pins (and the 4 optional touchscreen pins in section 1a) in this diagram already passed that check.
 
 ## 7. Quick wiring summary (copy/paste)
 
@@ -163,6 +202,9 @@ on this list - all 15 pins in this diagram already passed that check.
 TFT VCC  -> 5V (see caution)   TFT CS   -> GPIO10     TFT SDI  -> GPIO11
 TFT GND  -> GND                TFT RES  -> GPIO8      TFT SCK  -> GPIO12
 TFT LED  -> GPIO13             TFT DC   -> GPIO9      TFT SDO  -> (nothing)
+
+TOUCH T_CLK -> GPIO1   TOUCH T_DIN -> GPIO2   TOUCH T_DO -> GPIO42
+TOUCH T_CS  -> GPIO14  TOUCH T_IRQ -> (n/c)   (set TOUCH_ENABLED 1 in config.h)
 
 ENC CLK  -> GPIO4      ENC DT   -> GPIO5      ENC SW   -> GPIO6
 ENC +    -> 3V3        ENC GND  -> GND

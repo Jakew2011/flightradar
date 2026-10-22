@@ -11,8 +11,13 @@ a USB power supply - no PC, phone or SD card needed.
 * Rotated aircraft icons (airliner, helicopter, light aircraft, military, unknown)
 * Select an aircraft to see its callsign, ICAO, type, altitude, speed, heading,
   distance, departure/arrival airport codes and an aircraft photo when available
+* Search for an aircraft by callsign/registration and have the radar lock on
+  and keep it centred as soon as it appears, anywhere in range
+* Airport/airfield point markers within range
 * Green / amber / white themes, brightness, units (nm/km, ft/m, kt/km/h)
-* Settings, WiFi and home position are saved in the ESP32's own flash
+* Distinct audio alerts for military aircraft and for police/coastguard/air ambulance aircraft
+* Optional live National Rail departure board for one station, swapped in for the radar screen
+* Settings, WiFi and home position are saved in the ESP32's own flash, and survive firmware updates
 
 > **Verification note:** the firmware compiles with Arduino ESP32 core 2.0.17
 > for the ESP32-S3 N16R8 configuration. No physical board or display was
@@ -26,7 +31,7 @@ a USB power supply - no PC, phone or SD card needed.
 | Part | Notes |
 |---|---|
 | ESP32-S3-DevKitC-1 **N16R8** | 16 MB flash, 8 MB PSRAM. The PSRAM is **required** (the radar uses ~300 KB of picture buffers). |
-| 3.5" ST7796S 320x480 SPI display | Touch not used. |
+| 3.5" ST7796S 320x480 SPI display | Touch not required. If your module happens to have a touch controller, it can be wired up and tested too - see WIRING.md section 1a and `TOUCH_ENABLED` in `config.h`. |
 | Rotary encoder with push button | e.g. KY-040 / EC11 |
 | 3 tactile push buttons | MENU, BACK, HOME |
 | USB-C cable and 5 V USB power | one cable is all the power it needs |
@@ -210,16 +215,21 @@ There are three ways to set or change WiFi / position:
 
 1. **`config.h`** (before uploading) - if you edit WIFI_SSID, WIFI_PASSWORD, HOME_LAT or HOME_LON
    and upload again, the new values replace the ones saved on the device.
-2. **Setup portal (any phone, tablet or laptop):** the device creates a WiFi
-   network called **FlightRadar-Setup**. Join it, open **http://192.168.4.1/**
-   in a browser, enter WiFi name/password and your latitude/longitude, tap
-   *Save and connect*. The portal starts by itself when no WiFi is configured
-   or the first 5 connection attempts fail; you can also start it from
-   **Menu > WiFi status > press**, or by **holding BACK while powering on**.
-   A manually opened portal stays available while WiFi reconnects, even when
-   automatic portal startup is disabled; it switches itself off after the
-   configured timeout. Automatically opened portals close when WiFi connects.
-   Open **Advanced settings** in the portal to configure the portal toggle and
+2. **Setup portal (any phone, tablet or laptop):** the device creates its own
+   WiFi network called **FlightRadar-Setup**. Join it, open
+   **http://192.168.4.1/** in a browser, enter WiFi name/password and your
+   latitude/longitude, tap *Save and connect*. This AP starts by itself when
+   no WiFi is configured or the first 5 connection attempts fail; you can
+   also start it from **Menu > WiFi status > press**, or by **holding BACK
+   while powering on**. Once the device connects to your home WiFi, this
+   separate AP network switches itself off (so it's not permanently
+   broadcasting its own network alongside yours) - except when started by
+   holding BACK at power-on, which stays up deliberately since that's
+   explicitly asking for setup mode. **The settings page itself doesn't go
+   away when the AP does** - it keeps running the whole time the device is
+   on, reachable at its normal IP on your home WiFi (shown on **Menu > WiFi
+   status**) at `http://<that ip>/settings`, so you don't need to rejoin the
+   setup AP just to change a setting later. Open **Advanced settings** there to configure the portal toggle and
    retry policy, time zone, ADS-B sources and polling, aircraft aging, audio,
    night dimming, radar labels/sweep, controls, and serial baud. Passwords are
    never shown back in the form; leave a password field empty to keep its saved
@@ -233,8 +243,12 @@ There are three ways to set or change WiFi / position:
 The on-device **Menu > Advanced** tab provides quick toggles for the portal,
 ADS-B source mode, night dimming, ground-aircraft visibility, audio, labels,
 encoder direction/steps, and the automatic portal failure threshold. **Open
-web settings** launches the full configuration form. **Switch mode** is a
-placeholder until its behavior is defined. **Restore defaults** asks for
+web settings** starts the setup AP (see section 12 above) so you can reach the
+full configuration form from a phone/laptop even without home WiFi. **Switch
+mode** (top of the Main menu) swaps the radar screen for the train departure
+board - see section 13b - and back again. **Find aircraft** (also Main menu)
+opens the callsign/registration search-and-lock screen - see section 13c.
+**Restore defaults** asks for
 confirmation, restores firmware defaults, and clears WiFi credentials and the
 home coordinates. Serial baud changes and changes to the audio enable/URL take
 effect after a reboot; both device and portal offer a reboot prompt and warn if
@@ -242,8 +256,7 @@ you defer it. **Test speaker** plays a clear test tone immediately, then the WAV
 configured in `config.h` (or the saved Audio WAV URL), without changing the Audio
 setting. It is also available from the web settings page and works when
 announcements are disabled. On the device, select the outlined **TEST** button
-and press the encoder. **Switch mode** is also
-an outlined click action, currently a placeholder until its behavior is defined.
+and press the encoder.
 
 If the WiFi is lost the radar keeps animating, shows **WIFI DISCONNECTED**, keeps
 the last aircraft (they are removed after 60 s) and reconnects automatically
@@ -312,6 +325,77 @@ Monitor, note the `type=` code it prints for that aircraft, and add it to the
 Right now there's only the one clip for every military aircraft, as asked -
 if you later want different clips per operator (e.g. a distinct Spitfire
 sound), that's a reasonably small change to `aircraft.cpp`/`audio.cpp` - just ask.
+
+## 13a. Police / coastguard / air ambulance tones
+
+Alongside the military announcement above, three UK emergency-service
+categories get their own short, distinct beep pattern the first time they
+come into range (same cooldown mechanism as military, so a slow orbit
+doesn't repeat it): **police** (two-tone yelp), **coastguard** (descending
+three-tone sweep), **air ambulance** (double-beep, twice). The header shows
+`EMS n` (in place of `MIL n`) while any are visible, and the aircraft info
+panel shows which category.
+
+Detection is best-effort, by callsign/registration prefix (e.g. "POLICE" /
+"NPAS", "RESCUE" / "COASTGUARD", "HELIMED" / "HEMS", plus common UK
+registration prefixes like G-MCG for coastguard or G-HEMS/G-NAAC/etc. for air
+ambulance) - written without being able to test it against live traffic, same
+caveat as the military list. If a real unit near you doesn't trigger it, set
+`DEBUG_PRINT_AIRCRAFT_TYPES` to `1` in `config.h`, watch the Serial Monitor
+for the callsign/registration it actually reports, and add it to the
+`POLICE_CALLSIGN` / `COASTGUARD_CALLSIGN` / `AIRAMB_CALLSIGN` (or `*_REG`)
+lists near `aircraftClassifyService()` in `aircraft.cpp`.
+
+## 13b. Train departure board
+
+Press/hold whatever's mapped to "Switch mode" (Main menu) to flip the radar
+screen over to a live National Rail departure board for one station, using
+the Rail Data Marketplace's **Live Departure Board** API (REST/JSON - the
+current replacement for the old OpenLDBWS SOAP service, which had its
+self-service sign-up page retired). "Switch mode" again goes back to radar.
+
+**Getting an API key (free, no usage limit):**
+
+1. Register at <https://raildata.org.uk/registerPartner> - "Individual not
+   affiliated with a company" is fine for personal use. Wait for the
+   confirmation email (usually same-day).
+2. Use the welcome email to set a password, log in, set up MFA, and accept
+   the Terms of Use.
+3. Open the Live Departure Board product page:
+   <https://raildata.org.uk/dataProduct/P-d81d6eaf-8060-4467-a339-1c833e50cbbe/overview>,
+   click **Subscribe**, accept the licence terms (charging model is Free, no
+   usage limit), click **Subscribe for free**.
+4. Click **View subscriptions**, open **Live Departure Board**, click the
+   **Specification** tab, and scroll to **API access credentials**.
+5. Copy the **Consumer key** shown there.
+6. Paste it into `config.h`:
+   ```cpp
+   #define OPENLDBWS_API_KEY "your-consumer-key-here"
+   ```
+7. Set your station's 3-letter CRS code either in `config.h`
+   (`TRAIN_DEFAULT_STATION_CRS`) or on-device/web-portal afterwards (Advanced
+   menu, or the web setup portal's "Train departures" field) - no reflash
+   needed to change station.
+
+If `OPENLDBWS_API_KEY` is left empty, "Switch mode" just stays on the radar
+screen and the train screen (if you do reach it) shows "NO RAIL DATA API KEY
+CONFIGURED". A wrong or expired key shows as an HTTP 401/403 error on that
+screen - re-check the Consumer key on the Specification tab above.
+
+## 13c. Find aircraft (search-and-lock)
+
+**Main menu > Find aircraft** opens an 8-character entry screen (turn to pick
+each character, press to move on - same idea as the train station editor).
+Enter a callsign (e.g. `BAW123`) or a registration (e.g. `G-ABCD`, hyphen
+optional - it's ignored) and press **LOCK**. From then on, the radar centres
+on and auto-selects that aircraft the moment it's seen - even if it isn't in
+range yet, or temporarily drops out and comes back - until you clear it.
+An active 7500/7700 emergency still always takes priority for the radar's
+centre. To clear a lock: open **Find aircraft** again, clear all 8
+characters and press **LOCK**, or just manually select a different aircraft
+(turning the knob to pick one, or pressing BACK/HOME on the radar screen)
+- either clears the lock automatically. The header shows `LOCK <query>`
+while searching/locked.
 
 ## 14. Where the data comes from
 
@@ -454,7 +538,8 @@ Serial Monitor (115200) prints `[wifi]`, `[adsb]`, `[display]` lines - include t
 ## 18. Limitations
 
 * Aircraft counts beyond `MAX_AIRCRAFT` (250) are trimmed to the nearest ones; at 200 nm over busy areas the outer edge can therefore be incomplete.
-* Touch, SD card and GPS are deliberately not used.
+* SD card and GPS are deliberately not used. Touch is optional/experimental (off by default, see section 6) - the UI isn't designed around it, it's just available for boards that happen to have a touch controller.
+* Airport/airfield markers are simple labelled points (a small list in `radar.cpp`, `SHOW_AIRPORTS` in `config.h`), not real coastline/lake vector outlines - embedding genuine geographic shape data isn't practical on this hardware.
 * The night-dimming timer needs the clock (WiFi + NTP).
 * Public feeds can lag by several seconds; positions are estimates between updates.
 

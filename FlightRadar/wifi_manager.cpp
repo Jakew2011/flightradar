@@ -21,6 +21,7 @@ static uint16_t   s_fails = 0;
 
 static bool       s_portal = false;
 static bool       s_portalManual = false;
+static bool       s_portalBootForced = false;   // BACK held at power-on: stay in setup mode even if saved WiFi connects
 static uint32_t   s_portalStart = 0;
 static char       s_activePortalSsid[33] = "";
 static char       s_activePortalPass[65] = "";
@@ -270,7 +271,8 @@ static void handleSave() {
       b += F("<h3>Train departures</h3>");
       addTextInput(b, "Station (3-letter CRS code, e.g. LIT)", "traincrs", g_settings.trainStationCrs, 3);
       b += F("<p><small>Shown via the \"Switch mode\" button/menu item on the device. "
-             "Requires an OpenLDBWS API token in config.h.</small></p>");
+             "Requires a Rail Data Marketplace API key (OPENLDBWS_API_KEY) in config.h - "
+             "see the README for how to get one.</small></p>");
       b += F("<h3>Display settings</h3><label>Aircraft range</label><select name='range'>");
       for (uint8_t i = 0; i < RANGE_COUNT; ++i) {
         b += F("<option value='"); b += String(i); b += F("'");
@@ -501,6 +503,27 @@ static void handleSave() {
       ESP.restart();
     }
 
+// The web server (routes + listener) is independent of the setup AP - it's
+// started once, here, and left running for the rest of the session. That
+// way the settings page ("by always on wifi portal I mean when it connects
+// to wifi it should still be broadcasting its portal but just on wifi, not
+// creating its own network") stays reachable at the device's normal IP on
+// your home network even after the one-time setup AP has been shut down -
+// see wifiStopPortal() below, which only tears down the AP/DNS, not this.
+static void startWebServer() {
+  if (s_server) return;
+  s_server = new WebServer(80);
+  s_server->on("/", HTTP_GET, handleRoot);
+  s_server->on("/save", HTTP_POST, handleSave);
+  s_server->on("/settings", HTTP_GET, handleSettingsPage);
+  s_server->on("/settings/save", HTTP_POST, handleSettingsSave);
+  s_server->on("/speaker-test", HTTP_POST, handleSpeakerTest);
+  s_server->on("/defaults", HTTP_POST, handleRestoreDefaults);
+  s_server->on("/reboot", HTTP_POST, handleReboot);
+  s_server->onNotFound(handleRoot);          // captive-portal style: any URL shows the form while the AP is up
+  s_server->begin();
+}
+
 void wifiStartPortal(bool manual) {
   if (!manual && !g_settings.portalEnabled) return;
   if (s_portal) { s_portalManual = s_portalManual || manual; return; }
@@ -513,16 +536,7 @@ void wifiStartPortal(bool manual) {
   fr_copy(s_activePortalPass, sizeof(s_activePortalPass), g_settings.portalPass);
   s_dns = new DNSServer();
   s_dns->start(53, "*", WiFi.softAPIP());
-  s_server = new WebServer(80);
-  s_server->on("/", HTTP_GET, handleRoot);
-  s_server->on("/save", HTTP_POST, handleSave);
-  s_server->on("/settings", HTTP_GET, handleSettingsPage);
-  s_server->on("/settings/save", HTTP_POST, handleSettingsSave);
-  s_server->on("/speaker-test", HTTP_POST, handleSpeakerTest);
-  s_server->on("/defaults", HTTP_POST, handleRestoreDefaults);
-  s_server->on("/reboot", HTTP_POST, handleReboot);
-  s_server->onNotFound(handleRoot);          // captive-portal style: any URL shows the form
-  s_server->begin();
+  startWebServer();                          // no-op if it's already running (it usually is, see wifiBegin())
   WiFi.scanNetworks(true);                   // asynchronous scan for the drop-down list
   s_portal = true;
   s_portalManual = manual;
@@ -533,7 +547,10 @@ void wifiStartPortal(bool manual) {
 
 void wifiStopPortal() {
   if (!s_portal) return;
-  if (s_server) { s_server->stop(); delete s_server; s_server = nullptr; }
+  // Deliberately does NOT touch s_server - the settings page keeps running
+  // and stays reachable at the device's normal (STA) IP address; this only
+  // stops the device from also broadcasting its own separate "setup"
+  // WiFi network (named from WIFI_PORTAL_SSID in config.h).
   if (s_dns) { s_dns->stop(); delete s_dns; s_dns = nullptr; }
   WiFi.softAPdisconnect(true);
   WiFi.scanDelete();
@@ -542,7 +559,8 @@ void wifiStopPortal() {
   s_activePortalSsid[0] = 0;
   s_activePortalPass[0] = 0;
   s_portalManual = false;
-  Serial.println("[wifi] setup portal stopped");
+  s_portalBootForced = false;
+  Serial.println("[wifi] setup AP stopped; settings page still reachable on your WiFi network");
 }
 
 bool wifiPortalActive() { return s_portal; }
@@ -583,7 +601,8 @@ void wifiBegin(bool forcePortal) {
   WiFi.setHostname(g_settings.wifiHostname);
   WiFi.setSleep(false);
   s_state = WIFI_ST_IDLE;
-  if (forcePortal) wifiStartPortal(true);
+  startWebServer();                            // runs for the whole session, on AND off the setup AP - see its comment
+  if (forcePortal) { s_portalBootForced = true; wifiStartPortal(true); }
 }
 
 void wifiReconnectNow() {
@@ -603,7 +622,19 @@ void wifiUpdate() {
         s_fails = 0;
         configTzTime(g_settings.timezone, "pool.ntp.org", "time.google.com");
         Serial.printf("[wifi] connected, IP %s\n", WiFi.localIP().toString().c_str());
-        if (s_portal && !s_portalManual) wifiStopPortal();
+        // Stop broadcasting the device's own separate setup AP on a
+        // successful connection, even if it was opened manually ("Open web
+        // settings") - previously it stayed broadcasting for the full portal
+        // timeout (10 minutes by default) even once already connected to
+        // home WiFi, which read as "always on". The settings page itself
+        // doesn't go away: wifiStopPortal() only drops the AP, the web
+        // server keeps running and stays reachable at the IP shown on the
+        // WiFi status screen, now just over your home network instead of the
+        // device's own one. The one exception is holding BACK at power-on to
+        // force setup mode deliberately - the AP stays up even if the saved
+        // network connects in the background, since you asked for setup mode
+        // specifically.
+        if (s_portal && !s_portalBootForced) wifiStopPortal();
       } else if (now - s_attemptStart > g_settings.wifiConnectTimeoutMs) {
         WiFi.disconnect(false);
         s_fails++;
@@ -626,9 +657,13 @@ void wifiUpdate() {
       break;
   }
 
+  // The settings web server runs for the whole session (see startWebServer()
+  // / its comment above wifiStartPortal()), not just while the setup AP is
+  // broadcasting, so this is unconditional.
+  if (s_server) s_server->handleClient();
+
   if (s_portal) {
     if (s_dns) s_dns->processNextRequest();
-    if (s_server) s_server->handleClient();
     if (s_portal && !g_settings.portalEnabled && !s_portalManual) wifiStopPortal();
     else if (s_portal &&
              (strcmp(s_activePortalSsid, g_settings.portalSsid) != 0 ||

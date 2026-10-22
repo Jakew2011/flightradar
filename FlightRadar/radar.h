@@ -6,6 +6,8 @@
 void radarDrawBase(uint32_t nowMs, float rangeNm, bool compass);
 // Draw all visible aircraft, labels and the selection marker on top.
 void radarDrawAircraft(float rangeNm);
+// Draw airport/airfield point markers within range (see SHOW_AIRPORTS in config.h).
+void radarDrawAirports(float rangeNm);
 // Copy the radar sprite to the screen.
 void radarPush();
 // Convenience: base + aircraft + push.

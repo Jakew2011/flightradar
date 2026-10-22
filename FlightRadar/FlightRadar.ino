@@ -15,12 +15,21 @@
  *   input      encoder / buttons / optional touchscreen (background task)
  *   icons      aircraft symbols
  *   audio      "military aircraft" announcement over I2S (audio_data.h)
- *   train      National Rail departure board (OpenLDBWS, background task)
+ *   train      National Rail departure board (Rail Data Marketplace, background task)
  *   ui         screens, menus, event handling
  *
  * Build settings (Tools menu) are listed in README.md.
  */
 #include "config.h"
+// The Arduino core's main loop() task gets an 8 KB stack by default (see
+// arduino-esp32's main.cpp: getArduinoLoopTaskStackSize() is declared weak
+// specifically so a sketch can override it like this). This firmware's UI
+// has grown substantially (radar, menus, photo JPEG decode, the train
+// board, several editors) and photo loading in particular crashed the
+// board right at the point the decode finished - the classic signature of
+// a stack overflow silently corrupting memory rather than a clean error.
+// Doubling the stack here is the documented way to fix that.
+size_t getArduinoLoopTaskStackSize(void) { return 16384; }
 #include "settings.h"
 #include "display.h"
 #include "input.h"
@@ -80,6 +89,15 @@ void loop() {
   while (aircraftPollAnnouncement()) {                      // military aircraft just became visible
     audioPlayMilitary();
     uiShowMilitaryAlert();
+  }
+  AircraftService svc;
+  while (aircraftPollServiceAnnouncement(svc)) {             // police/coastguard/air ambulance just appeared
+    switch (svc) {
+      case SVC_POLICE:        audioPlayPolice();       break;
+      case SVC_COASTGUARD:    audioPlayCoastguard();   break;
+      case SVC_AIR_AMBULANCE: audioPlayAirAmbulance(); break;
+      default: break;
+    }
   }
 
   delay(1);                                      // let idle tasks run

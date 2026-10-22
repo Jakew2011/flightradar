@@ -8,6 +8,15 @@ void audioInit();          // call once from setup(); safe to call even if AUDIO
 void audioPlayMilitary();  // non-blocking: signals the audio task to (re)start the clip
 bool audioTestSpeaker();   // queue the configured WAV even when announcements are disabled
 void audioPlayEmergencyBeep(); // non-blocking urgent alert tone (squawk 7500)
-void audioPlayEmergency7700(); // non-blocking: loud 2s-on/1s-off pattern, 5s of total beep time (squawk 7700)
+void audioPlayEmergency7700(); // non-blocking: loud 2s-on/1s-off pattern, 3 full cycles (squawk 7700)
 bool audioClipBusy();      // true while the military/test clip is actively playing over I2S -
                             // lets the UI keep a full-screen alert up for exactly the clip's duration
+
+// Non-blocking, distinct one-shot tones for the three emergency-service
+// categories aircraft.cpp can detect by callsign/registration. Each has its
+// own short, recognisable pattern (not shared with the 7500/7700/military
+// sounds above) so the user can tell by ear which kind of aircraft just
+// appeared.
+void audioPlayPolice();
+void audioPlayCoastguard();
+void audioPlayAirAmbulance();

@@ -7,8 +7,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include <string.h>
-#include <ctype.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -22,11 +22,24 @@ static uint16_t         s_count = 0;
 static volatile bool    s_active = false;   // only true while the train screen is on-screen
 static volatile bool    s_force = false;
 
-bool trainIsConfigured() { return OPENLDBWS_API_TOKEN[0] != 0; }
+bool trainIsConfigured() { return OPENLDBWS_API_KEY[0] != 0; }
+
+static void trainTask(void*);
+static bool s_taskStarted = false;
 
 void trainSetActive(bool active) {
   s_active = active;
-  if (active) s_force = true;    // refresh immediately on entering the screen
+  if (active) {
+    s_force = true;    // refresh immediately on entering the screen
+    // The background task is only created the first time it's actually
+    // needed, not at boot - it costs an 8 KB stack that sits unused for
+    // anyone who never opens the train board, competing with everything
+    // else (photo downloads/JPEG decode included) for the same RAM budget.
+    if (!s_taskStarted) {
+      s_taskStarted = true;
+      xTaskCreatePinnedToCore(trainTask, "train", 8192, nullptr, 1, nullptr, 0);
+    }
+  }
 }
 void trainRequestNow() { s_force = true; }
 
@@ -44,81 +57,6 @@ uint16_t trainGetServices(TrainService* out, uint16_t maxOut) {
   return n;
 }
 
-// ---------------------------------------------------------------------------
-//  Tiny, pragmatic XML reader - this is not a general-purpose XML parser,
-//  just enough to pull named elements out of an OpenLDBWS response. It
-//  ignores the namespace prefix on each tag (lt2/lt4/lt5/lt7/lt8... differ
-//  across WSDL versions and aren't worth hard-coding) and matches on the
-//  local element name only, scoped to whatever substring you hand it.
-// ---------------------------------------------------------------------------
-// Finds the first <PREFIX:localName>...</PREFIX:localName> at or after
-// "from" within xml[0..xmlLen). On success returns true and sets
-// contentStart/contentEnd (the inner text span) and afterEnd (index just
-// past the closing tag, handy as the next search's "from").
-static bool xmlFind(const String& xml, int from, const char* localName,
-                    int& contentStart, int& contentEnd, int& afterEnd) {
-  if (from < 0) return false;
-  String openTail = ":";
-  openTail += localName;
-  openTail += ">";
-  int p = xml.indexOf(openTail, from);
-  while (p >= 0) {
-    int lt = xml.lastIndexOf('<', p);
-    if (lt < 0 || lt < from - 1) return false;
-    // reject a false match where ":localName>" is actually the tail of a
-    // longer, different element name (e.g. "std" matching inside "etd")
-    bool prefixOk = true;
-    for (int i = lt + 1; i < p; ++i) {
-      char c = xml[i];
-      if (!isalnum((unsigned char)c)) { prefixOk = false; break; }
-    }
-    if (prefixOk) {
-      String prefix = xml.substring(lt + 1, p);
-      contentStart = p + openTail.length();
-      String closeTag = "</";
-      closeTag += prefix;
-      closeTag += ":";
-      closeTag += localName;
-      closeTag += ">";
-      int endP = xml.indexOf(closeTag, contentStart);
-      if (endP >= 0) {
-        contentEnd = endP;
-        afterEnd = endP + closeTag.length();
-        return true;
-      }
-    }
-    p = xml.indexOf(openTail, p + 1);
-  }
-  return false;
-}
-
-// Decodes the handful of XML entities OpenLDBWS actually uses in station/
-// destination names (&amp; &apos; &quot; &lt; &gt;) into "out".
-static void xmlUnescapeInto(char* out, size_t n, const String& in) {
-  size_t o = 0;
-  for (int i = 0; i < (int)in.length() && o + 1 < n; ) {
-    if (in[i] == '&') {
-      struct { const char* ent; char ch; } ents[] = {
-        {"&amp;", '&'}, {"&apos;", '\''}, {"&quot;", '"'}, {"&lt;", '<'}, {"&gt;", '>'}
-      };
-      bool matched = false;
-      for (auto& e : ents) {
-        size_t elen = strlen(e.ent);
-        if ((size_t)(in.length() - i) >= elen && in.substring(i, i + elen) == e.ent) {
-          out[o++] = e.ch;
-          i += (int)elen;
-          matched = true;
-          break;
-        }
-      }
-      if (!matched) { out[o++] = in[i++]; }
-    } else {
-      out[o++] = in[i++];
-    }
-  }
-  out[o] = 0;
-}
-
 static void setError(const char* msg, int http) {
   portENTER_CRITICAL(&s_mux);
   s_status.lastOk = false;
@@ -128,20 +66,18 @@ static void setError(const char* msg, int http) {
 }
 
 // One fetch + parse cycle. Returns true on success (s_services/s_count/s_status updated).
+//
+// This is the Rail Data Marketplace's Live Departure Board API - a plain
+// REST/JSON endpoint (GET .../GetDepartureBoard/{crs}, key in an
+// "x-apikey" header) that replaced the old OpenLDBWS SOAP/XML service when
+// its self-service registration page was retired. See the comment above
+// OPENLDBWS_API_KEY in config.h for how to get a key.
 static bool fetchBoard(const char* crs) {
-  if (!trainIsConfigured()) { setError("NO API TOKEN CONFIGURED", 0); return false; }
+  if (!trainIsConfigured()) { setError("NO API KEY CONFIGURED", 0); return false; }
   if (!wifiIsConnected())   { setError("NO WIFI", 0); return false; }
 
-  char body[900];
-  snprintf(body, sizeof(body),
-    "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-    "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" "
-    "xmlns:typ=\"http://thalesgroup.com/RTTI/2013-11-28/Token/types\" "
-    "xmlns:ldb=\"http://thalesgroup.com/RTTI/2017-10-01/ldb/\">"
-    "<soap:Header><typ:AccessToken><typ:TokenValue>%s</typ:TokenValue></typ:AccessToken></soap:Header>"
-    "<soap:Body><ldb:GetDepartureBoardRequest><ldb:numRows>%u</ldb:numRows>"
-    "<ldb:crs>%s</ldb:crs></ldb:GetDepartureBoardRequest></soap:Body></soap:Envelope>",
-    OPENLDBWS_API_TOKEN, (unsigned)TRAIN_MAX_ROWS, crs);
+  char url[180];
+  snprintf(url, sizeof(url), "%s/%s?numRows=%u", OPENLDBWS_ENDPOINT, crs, (unsigned)TRAIN_MAX_ROWS);
 
   WiFiClientSecure secure;
   secure.setInsecure();     // encrypted but the server cert isn't pinned/verified, same approach as the ADS-B feeds
@@ -151,16 +87,18 @@ static bool fetchBoard(const char* crs) {
   http.setReuse(false);
   http.setConnectTimeout(TRAIN_CONNECT_TIMEOUT_MS);
   http.setTimeout(TRAIN_HTTP_TIMEOUT_MS);
-  if (!http.begin(secure, OPENLDBWS_ENDPOINT)) { setError("BAD URL", 0); return false; }
-  http.addHeader("Content-Type", "text/xml; charset=utf-8");
-  http.addHeader("SOAPAction", "\"http://thalesgroup.com/RTTI/2017-10-01/ldb/GetDepartureBoard\"");
+  if (!http.begin(secure, url)) { setError("BAD URL", 0); return false; }
+  http.addHeader("x-apikey", OPENLDBWS_API_KEY);
   http.addHeader("User-Agent", "FlightRadar-ESP32/" FW_VERSION);
 
-  int httpCode = http.POST((uint8_t*)body, strlen(body));
+  int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
     http.end();
-    if (httpCode < 0) setError("NO CONNECTION", httpCode);
-    else {
+    if (httpCode < 0) {
+      setError("NO CONNECTION", httpCode);
+    } else if (httpCode == 401 || httpCode == 403) {
+      setError("BAD/EXPIRED API KEY", httpCode);
+    } else {
       char msg[24];
       snprintf(msg, sizeof(msg), "HTTP %d", httpCode);
       setError(msg, httpCode);
@@ -168,73 +106,54 @@ static bool fetchBoard(const char* crs) {
     return false;
   }
 
-  String xml = http.getString();
+  JsonDocument doc;
+  DeserializationError jsonErr = deserializeJson(doc, http.getStream());
   http.end();
-  if (!xml.length()) { setError("EMPTY RESPONSE", httpCode); return false; }
-
-  // Fault check (bad/expired token, unknown CRS, etc.)
-  int fs, fe, fa;
-  if (xmlFind(xml, 0, "faultstring", fs, fe, fa)) {
-    char msg[40];
-    xmlUnescapeInto(msg, sizeof(msg), xml.substring(fs, fe));
-    setError(msg, httpCode);
-    return false;
-  }
+  if (jsonErr) { setError("BAD JSON RESPONSE", httpCode); return false; }
 
   TrainStatus newStatus;
   memset(&newStatus, 0, sizeof(newStatus));
   newStatus.lastHttpCode = httpCode;
 
-  int cs, ce, ca;
-  if (xmlFind(xml, 0, "locationName", cs, ce, ca))
-    xmlUnescapeInto(newStatus.locationName, sizeof(newStatus.locationName), xml.substring(cs, ce));
-  else
-    fr_copy(newStatus.locationName, sizeof(newStatus.locationName), crs);
+  const char* locName = doc["locationName"] | "";
+  fr_copy(newStatus.locationName, sizeof(newStatus.locationName), locName[0] ? locName : crs);
 
-  if (xmlFind(xml, 0, "nrccMessages", cs, ce, ca)) {
-    // Each message is wrapped in its own <...:message>...</...:message>
-    // inside nrccMessages; just surface the first one.
-    int ms, me, ma;
-    if (xmlFind(xml, cs, "message", ms, me, ma) && ma <= ce)
-      xmlUnescapeInto(newStatus.nrccMessage, sizeof(newStatus.nrccMessage), xml.substring(ms, me));
+  JsonVariantConst nrcc = doc["nrccMessages"];
+  if (nrcc.is<JsonArrayConst>() && nrcc.size() > 0) {
+    const char* v = nrcc[0]["Value"] | "";
+    fr_copy(newStatus.nrccMessage, sizeof(newStatus.nrccMessage), v);
   }
 
   TrainService staged[TRAIN_MAX_SERVICES];
   uint16_t n = 0;
 
-  int svcStart, svcEnd, svcAfter;
-  int searchFrom = 0;
-  while (n < TRAIN_MAX_SERVICES && xmlFind(xml, searchFrom, "service", svcStart, svcEnd, svcAfter)) {
-    searchFrom = svcAfter;
-    TrainService& svc = staged[n];
-    memset(&svc, 0, sizeof(svc));
-    fr_copy(svc.platform, sizeof(svc.platform), "-");
-    fr_copy(svc.etd, sizeof(svc.etd), "?");
+  JsonVariantConst services = doc["trainServices"];
+  if (services.is<JsonArrayConst>()) {
+    for (JsonVariantConst svc : services.as<JsonArrayConst>()) {
+      if (n >= TRAIN_MAX_SERVICES) break;
+      TrainService& out = staged[n];
+      memset(&out, 0, sizeof(out));
 
-    int fStart, fEnd, fAfter;
-    if (xmlFind(xml, svcStart, "std", fStart, fEnd, fAfter) && fAfter <= svcEnd)
-      xmlUnescapeInto(svc.std, sizeof(svc.std), xml.substring(fStart, fEnd));
-    else
-      fr_copy(svc.std, sizeof(svc.std), "--:--");
+      const char* std_ = svc["std"] | "";
+      fr_copy(out.std, sizeof(out.std), std_[0] ? std_ : "--:--");
 
-    if (xmlFind(xml, svcStart, "etd", fStart, fEnd, fAfter) && fAfter <= svcEnd)
-      xmlUnescapeInto(svc.etd, sizeof(svc.etd), xml.substring(fStart, fEnd));
+      const bool cancelled = svc["isCancelled"] | false;
+      const char* etd = svc["etd"] | "";
+      if (cancelled) fr_copy(out.etd, sizeof(out.etd), "Cancelled");
+      else fr_copy(out.etd, sizeof(out.etd), etd[0] ? etd : "?");
 
-    if (xmlFind(xml, svcStart, "platform", fStart, fEnd, fAfter) && fAfter <= svcEnd)
-      xmlUnescapeInto(svc.platform, sizeof(svc.platform), xml.substring(fStart, fEnd));
+      const char* plat = svc["platform"] | "";
+      fr_copy(out.platform, sizeof(out.platform), plat[0] ? plat : "-");
 
-    // Destination name is nested inside <...:destination><...:location>
-    // <...:locationName>...</...:locationName> - scope the search to the
-    // destination block so this doesn't accidentally pick up the origin's
-    // name instead.
-    int dStart, dEnd, dAfter;
-    if (xmlFind(xml, svcStart, "destination", dStart, dEnd, dAfter) && dEnd <= svcEnd) {
-      if (xmlFind(xml, dStart, "locationName", fStart, fEnd, fAfter) && fAfter <= dEnd)
-        xmlUnescapeInto(svc.destination, sizeof(svc.destination), xml.substring(fStart, fEnd));
+      // "destination" is an array (usually one entry) of {locationName, crs, ...}.
+      const char* dest = "";
+      JsonVariantConst destArr = svc["destination"];
+      if (destArr.is<JsonArrayConst>() && destArr.size() > 0)
+        dest = destArr[0]["locationName"] | "";
+      fr_copy(out.destination, sizeof(out.destination), dest[0] ? dest : "UNKNOWN");
+
+      ++n;
     }
-    if (!svc.destination[0]) fr_copy(svc.destination, sizeof(svc.destination), "UNKNOWN");
-
-    ++n;
   }
 
   newStatus.lastOk = true;
@@ -277,6 +196,7 @@ static void trainTask(void*) {
 void trainInit() {
   memset(&s_status, 0, sizeof(s_status));
   fr_copy(s_status.lastError, sizeof(s_status.lastError),
-          trainIsConfigured() ? "NOT YET REQUESTED" : "NO API TOKEN CONFIGURED");
-  xTaskCreatePinnedToCore(trainTask, "train", 8192, nullptr, 1, nullptr, 0);
+          trainIsConfigured() ? "NOT YET REQUESTED" : "NO API KEY CONFIGURED");
+  // The background task itself is started lazily, the first time
+  // trainSetActive(true) is called - see the comment there.
 }

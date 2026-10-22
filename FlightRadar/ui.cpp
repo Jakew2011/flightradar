@@ -26,7 +26,7 @@
 enum Screen : uint8_t {
   SCR_BOOT, SCR_RADAR, SCR_MENU, SCR_HOME_EDIT, SCR_WIFI, SCR_ABOUT,
   SCR_REBOOT_PROMPT, SCR_DEFAULTS_CONFIRM, SCR_UPDATE_PROMPT, SCR_MILITARY_ALERT,
-  SCR_TRAIN, SCR_TRAIN_STATION_EDIT
+  SCR_TRAIN, SCR_TRAIN_STATION_EDIT, SCR_AIRCRAFT_SEARCH
 };
 // Radar UI modes (documented in README):
 //   MODE_ZOOM   : encoder turns zoom the radar; short press selects nearest aircraft.
@@ -79,11 +79,12 @@ enum ItemId : uint8_t {
   IT_PORTAL_ENABLED, IT_PORTAL_FAILS, IT_ADSB_MODE, IT_NIGHT_MODE,
   IT_GROUND, IT_AUDIO, IT_LABELS, IT_ENCODER_REVERSE, IT_ENCODER_STEPS,
   IT_PORTAL_NOW, IT_SWITCH_MODE, IT_SERIAL_BAUD, IT_RESTORE_DEFAULTS, IT_SPEAKER_TEST,
-  IT_CHECK_UPDATE, IT_TRAIN_STATION
+  IT_CHECK_UPDATE, IT_TRAIN_STATION, IT_FIND_AIRCRAFT
 };
 struct MenuItem { const char* label; ItemId id; bool editable; };
 static const MenuItem MAIN_ITEMS[] = {
   {"Switch mode", IT_SWITCH_MODE, false},
+  {"Find aircraft", IT_FIND_AIRCRAFT, false},
   {"Range", IT_RANGE, true}, {"Units", IT_UNITS, false}, {"Theme", IT_THEME, true},
   {"Brightness", IT_BRIGHT, true}, {"Radar speed", IT_SPEED, true},
   {"Home location", IT_HOME, false}, {"Advanced", IT_ADVANCED, false},
@@ -128,6 +129,14 @@ static struct {
 
 // train board screen
 static bool s_trainMode = false;            // true once "Switch mode" has swapped the main screen to the train board
+
+// aircraft search-and-lock (callsign/registration) editor
+static const char AC_SEARCH_CHARSET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-";
+#define AC_SEARCH_CHARSET_LEN ((int)(sizeof(AC_SEARCH_CHARSET) - 1))
+static struct {
+  uint8_t pos;                              // 0..7 the eight characters, 8 SAVE
+  char    chars[8];
+} ae;
 
 static void toast(const char* msg, uint32_t nowMs, uint32_t ms = 2000) {
   fr_copy(s_toast, sizeof(s_toast), msg);
@@ -355,6 +364,9 @@ static bool photoJpegOutput(int16_t x, int16_t y, uint16_t width,
 
 static bool decodePhoto(const AircraftPhotoResult& photo) {
   if (!photo.jpeg || !photo.jpegLength || photo.jpegLength > UINT32_MAX) return false;
+  Serial.printf("[photo] decoding %u bytes (free heap %u KB, free PSRAM %u KB)\n",
+                (unsigned)photo.jpegLength, (unsigned)(ESP.getFreeHeap() / 1024),
+                (unsigned)(ESP.getFreePsram() / 1024));
 
   uint16_t width = 0;
   uint16_t height = 0;
@@ -515,6 +527,8 @@ static void drawPanelAircraft(const Aircraft& a) {
   if (a.squawk == 7500 || a.squawk == 7700) {
     snprintf(buf, sizeof(buf), "SQUAWK: %u - %s", (unsigned)a.squawk,
              a.squawk == 7500 ? "HIJACK" : "EMERGENCY");
+  } else if (a.service != SVC_NONE) {
+    snprintf(buf, sizeof(buf), "SERVICE: %s", aircraftServiceName(a.service));
   } else if (s_routeState == AIRCRAFT_ROUTE_READY) {
     snprintf(buf, sizeof(buf), "ROUTE: %s > %s", s_departure, s_arrival);
   } else if (s_routeState == AIRCRAFT_ROUTE_LOADING) {
@@ -747,6 +761,11 @@ static void itemValue(uint8_t id, char* out, size_t n) {
     case IT_SWITCH_MODE: fr_copy(out, n, "CLICK"); break;
     case IT_CHECK_UPDATE: fr_copy(out, n, updateIsEnabled() ? "CHECK" : "DISABLED"); break;
     case IT_TRAIN_STATION: fr_copy(out, n, g_settings.trainStationCrs); break;
+    case IT_FIND_AIRCRAFT:
+      if (aircraftLockActive()) snprintf(out, n, "LOCKED: %s", aircraftLockQuery());
+      else if (aircraftLockPending()) snprintf(out, n, "SEARCHING: %s", aircraftLockQuery());
+      else fr_copy(out, n, "SET");
+      break;
     default:           out[0] = 0;
   }
 }
@@ -971,6 +990,72 @@ static void trainEditPress(uint32_t now) {
 }
 
 // ===========================================================================
+//  Aircraft search-and-lock (callsign/registration) editor
+// ===========================================================================
+static void aircraftSearchEditInit() {
+  const char* q = aircraftLockQuery();
+  for (int i = 0; i < 8; i++) ae.chars[i] = q[i] ? q[i] : ' ';
+  ae.pos = 0;
+}
+
+static void drawAircraftSearchEdit() {
+  const Theme& th = themeCurrent();
+  TFT_eSprite& s = spRadar;
+  s.fillSprite(th.bg);
+  s.setTextDatum(TL_DATUM);
+  s.setTextColor(th.text);
+  s.drawString("FIND AIRCRAFT (CALLSIGN/REG)", 8, 10, 4);
+  int x = (SCREEN_W - (8 * 28)) / 2;
+  for (int i = 0; i < 8; i++) {
+    drawCell(s, x, 90, ae.chars[i], ae.pos == i);
+    x += 28;
+  }
+  const bool hi = (ae.pos == 8);
+  s.fillRoundRect(90, 160, 140, 38, 6, hi ? th.gridDim : th.bg);
+  s.drawRoundRect(90, 160, 140, 38, 6, hi ? th.select : th.grid);
+  s.setTextDatum(MC_DATUM);
+  s.setTextColor(hi ? th.select : th.text);
+  s.drawString("LOCK", 160, 179, 4);
+  s.pushSprite(0, RADAR_Y);
+
+  panelBegin();
+  panelText(14, "TURN: CHANGE CHARACTER", 2, th.text);
+  panelText(38, "PRESS: NEXT     BACK: CANCEL", 2, th.text);
+  panelText(62, "Callsign (e.g. BAW123) or reg (e.g. G-ABCD)", 1, th.textDim);
+  if (aircraftLockActive()) panelText(80, "Locked - leave blank and press LOCK to clear", 1, th.ok);
+  else if (aircraftLockPending()) panelText(80, "Searching - will lock on when it appears", 1, th.select);
+  else panelText(80, "Leave blank and press LOCK to clear an active lock", 1, th.textDim);
+  if (s_toast[0] && (int32_t)(s_toastUntil - millis()) > 0) panelText(108, s_toast, 2, th.warn);
+  panelPush();
+  drawHeader("FIND AIRCRAFT", "", "", th.ok);
+}
+
+static void aircraftSearchEditTurn(int dir) {
+  if (ae.pos >= 8) return;
+  char& c = ae.chars[ae.pos];
+  const char* p = strchr(AC_SEARCH_CHARSET, c);
+  int idx = p ? (int)(p - AC_SEARCH_CHARSET) : 0;
+  idx = (idx + AC_SEARCH_CHARSET_LEN + dir) % AC_SEARCH_CHARSET_LEN;
+  c = AC_SEARCH_CHARSET[idx];
+}
+
+static void aircraftSearchEditPress(uint32_t now) {
+  if (ae.pos < 8) { ae.pos++; return; }
+  char q[9];
+  int n = 0;
+  for (int i = 0; i < 8; i++) if (ae.chars[i] != ' ') q[n++] = ae.chars[i];
+  q[n] = 0;
+  if (n == 0) {
+    aircraftClearLock();
+    toast("AIRCRAFT LOCK CLEARED", now, 2000);
+  } else {
+    aircraftLockSearch(q);
+    toast("SEARCHING...", now, 2000);
+  }
+  closeToRadar();
+}
+
+// ===========================================================================
 //  WiFi + About screens
 // ===========================================================================
 static void infoLine(int y, const char* label, const char* value, uint16_t vcol) {
@@ -1002,16 +1087,27 @@ static void drawWifiScreen() {
     wifiPortalIpString(b, sizeof(b));
     spRadar.setTextDatum(TL_DATUM);
     spRadar.setTextColor(th.select);
-    spRadar.drawString("SETUP PORTAL ACTIVE", 10, 204, 2);
+    spRadar.drawString("SETUP AP ACTIVE", 10, 204, 2);
     char l[48];
     snprintf(l, sizeof(l), "1. JOIN WIFI: %s", wifiPortalSsid());
     spRadar.drawString(l, 10, 226, 2);
     snprintf(l, sizeof(l), "2. OPEN  http://%s", b);
     spRadar.drawString(l, 10, 246, 2);
+  } else if (wifiIsConnected()) {
+    // The settings page keeps running on the home network even once the
+    // one-time setup AP has shut down - it's always reachable here, not
+    // just while that AP is broadcasting.
+    wifiIpString(b, sizeof(b));
+    spRadar.setTextDatum(TL_DATUM);
+    spRadar.setTextColor(th.textDim);
+    spRadar.drawString("SETTINGS PAGE ALWAYS ON:", 10, 204, 2);
+    char l[48];
+    snprintf(l, sizeof(l), "http://%s/settings", b);
+    spRadar.drawString(l, 10, 226, 2);
   }
   spRadar.pushSprite(0, RADAR_Y);
   panelBegin();
-  panelText(14, wifiPortalActive() ? "PRESS: STOP SETUP PORTAL" : "PRESS: START SETUP PORTAL", 2, th.text);
+  panelText(14, wifiPortalActive() ? "PRESS: STOP SETUP AP" : "PRESS: START SETUP AP", 2, th.text);
   panelText(38, "BACK: UP     HOME / HOLD: EXIT", 2, th.text);
   panelPush();
   drawHeader("WIFI STATUS", "", "", statusDot());
@@ -1056,9 +1152,9 @@ static void drawTrainScreen() {
   if (!trainIsConfigured()) {
     s.setTextDatum(MC_DATUM);
     s.setTextColor(th.warn);
-    s.drawString("NO OPENLDBWS API TOKEN CONFIGURED", SCREEN_W / 2, 100, 2);
+    s.drawString("NO RAIL DATA API KEY CONFIGURED", SCREEN_W / 2, 100, 2);
     s.setTextColor(th.textDim);
-    s.drawString("Set OPENLDBWS_API_TOKEN in config.h", SCREEN_W / 2, 130, 2);
+    s.drawString("Set OPENLDBWS_API_KEY in config.h", SCREEN_W / 2, 130, 2);
   } else {
     TrainStatus st;
     trainGetStatus(st);
@@ -1254,9 +1350,15 @@ static void drawRadarScreen(uint32_t now) {
   char mid[16] = "";
   if (s_mode == MODE_SELECT) {
     fr_copy(mid, sizeof(mid), "FOLLOW");
+  } else if (aircraftLockActive()) {
+    snprintf(mid, sizeof(mid), "LOCK %s", aircraftLockQuery());
+  } else if (aircraftLockPending()) {
+    fr_copy(mid, sizeof(mid), "SEARCHING...");
   } else {
     const uint16_t milCount = aircraftVisibleMilitaryCount();
+    const uint16_t svcCount = aircraftVisibleServiceCount();
     if (milCount > 0) snprintf(mid, sizeof(mid), "MIL %u", (unsigned)milCount);
+    else if (svcCount > 0) snprintf(mid, sizeof(mid), "EMS %u", (unsigned)svcCount);
   }
   drawHeader(left, mid, right, dot);
 
@@ -1350,6 +1452,19 @@ void uiHandleEvent(const InputEvent& ev, uint32_t now) {
       }
       return;
 
+    case SCR_AIRCRAFT_SEARCH:
+      switch (ev.type) {
+        case EVT_ENC_CW:    aircraftSearchEditTurn(+1); break;
+        case EVT_ENC_CCW:   aircraftSearchEditTurn(-1); break;
+        case EVT_ENC_SHORT: aircraftSearchEditPress(now); break;
+        case EVT_BACK:      s_screen = SCR_MENU; break;
+        case EVT_ENC_LONG:
+        case EVT_HOME:
+        case EVT_MENU:      closeToRadar(); break;
+        default: break;
+      }
+      return;
+
     case SCR_MENU: {
       const int n = s_page == 1 ? (int)N_UNITS : s_page == 2 ? (int)N_ADVANCED : (int)N_MAIN;
       const MenuItem* items = s_page == 1 ? UNIT_ITEMS : s_page == 2 ? ADVANCED_ITEMS : MAIN_ITEMS;
@@ -1379,6 +1494,7 @@ void uiHandleEvent(const InputEvent& ev, uint32_t now) {
           else if (it.id == IT_ADVANCED) { s_page = 2; }
           else if (it.id == IT_HOME) { homeEditInit(); s_screen = SCR_HOME_EDIT; }
           else if (it.id == IT_TRAIN_STATION) { trainEditInit(); s_screen = SCR_TRAIN_STATION_EDIT; }
+          else if (it.id == IT_FIND_AIRCRAFT) { aircraftSearchEditInit(); s_screen = SCR_AIRCRAFT_SEARCH; }
           else if (it.id == IT_WIFI) s_screen = SCR_WIFI;
           else if (it.id == IT_ABOUT) s_screen = SCR_ABOUT;
           else if (it.id == IT_PORTAL_NOW) {
@@ -1389,7 +1505,7 @@ void uiHandleEvent(const InputEvent& ev, uint32_t now) {
             toast(audioTestSpeaker() ? "CONFIGURED WAV TEST QUEUED" : "SPEAKER TEST UNAVAILABLE", now, 2500);
           else if (it.id == IT_SWITCH_MODE) {
             if (!s_trainMode && !trainIsConfigured())
-              toast("TRAIN BOARD: NO API TOKEN CONFIGURED", now, 3000);
+              toast("TRAIN BOARD: NO API KEY CONFIGURED", now, 3000);
             else { s_trainMode = !s_trainMode; closeToRadar(); }
           }
           else if (it.id == IT_CHECK_UPDATE) {
@@ -1624,5 +1740,6 @@ void uiUpdate(uint32_t now) {
     case SCR_MILITARY_ALERT: drawMilitaryAlert(); break;
     case SCR_TRAIN:          drawTrainScreen(); break;
     case SCR_TRAIN_STATION_EDIT: drawTrainEdit(); break;
+    case SCR_AIRCRAFT_SEARCH:    drawAircraftSearchEdit(); break;
   }
 }

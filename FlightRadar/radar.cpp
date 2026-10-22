@@ -4,6 +4,7 @@
 #include "aircraft.h"
 #include "icons.h"
 #include "settings.h"
+#include "geo.h"
 #include <Arduino.h>
 #include <math.h>
 #include <string.h>
@@ -222,12 +223,57 @@ void radarDrawAircraft(float rangeNm) {
   }
 }
 
+// ---------------------------------------------------------------------------
+//  Airports/airfields - simple point markers, not real coastline/lake
+//  outlines (not practical to embed real vector map data on this hardware -
+//  this is the scoped-down version of that request). Best-effort, UK-centric
+//  list of major commercial airports plus a couple of general-aviation
+//  fields, written without being able to test against real hardware. Add
+//  more yourself in the same {code, lat, lon} format if you want finer
+//  coverage near you.
+// ---------------------------------------------------------------------------
+struct AirportEntry { const char* code; double lat, lon; };
+static const AirportEntry AIRPORTS[] = {
+  {"LHR", 51.4700, -0.4543}, {"LGW", 51.1481, -0.1903}, {"STN", 51.8860,  0.2389},
+  {"LTN", 51.8747, -0.3683}, {"LCY", 51.5053,  0.0553}, {"MAN", 53.3537, -2.2750},
+  {"BHX", 52.4539, -1.7480}, {"EDI", 55.9500, -3.3725}, {"GLA", 55.8719, -4.4331},
+  {"BRS", 51.3827, -2.7191}, {"LBA", 53.8659, -1.6606}, {"LPL", 53.3336, -2.8497},
+  {"NCL", 55.0375, -1.6917}, {"EMA", 52.8311, -1.3281}, {"SOU", 50.9503, -1.3568},
+  {"NWI", 52.6758,  1.2828}, {"EXT", 50.7346, -3.4139}, {"CWL", 51.3967, -3.3433},
+  {"BFS", 54.6575, -6.2158}, {"ABZ", 57.2019, -2.1978}, {"ESH", 50.8356, -0.2972},  // Shoreham
+  {"BQH", 51.3308,  0.0325},  // Biggin Hill
+  {"FAB", 51.2758, -0.7764},  // Farnborough
+  {"BOH", 50.7800, -1.8425},  // Bournemouth
+};
+#define N_AIRPORTS (sizeof(AIRPORTS) / sizeof(AIRPORTS[0]))
+
+void radarDrawAirports(float rangeNm) {
+  if (!displaySpritesOk() || !SHOW_AIRPORTS) return;
+  const Theme& th = themeCurrent();
+  double centerLat, centerLon;
+  aircraftMapCenter(centerLat, centerLon);
+  const float ppn = (float)RADAR_R / rangeNm;
+  TFT_eSprite& s = spRadar;
+  s.setTextDatum(MC_DATUM);
+  for (size_t i = 0; i < N_AIRPORTS; i++) {
+    float eastNm, northNm;
+    geoToEastNorth(centerLat, centerLon, AIRPORTS[i].lat, AIRPORTS[i].lon, &eastNm, &northNm);
+    if (sqrtf(eastNm * eastNm + northNm * northNm) > rangeNm) continue;
+    const int px = RADAR_CX + (int)lroundf(eastNm * ppn);
+    const int py = RADAR_CY - (int)lroundf(northNm * ppn);
+    s.drawRect(px - 3, py - 3, 7, 7, th.gridDim);
+    s.setTextColor(th.textDim);
+    s.drawString(AIRPORTS[i].code, px, py - 11, 1);
+  }
+}
+
 void radarPush() {
   if (displaySpritesOk()) spRadar.pushSprite(0, RADAR_Y);
 }
 
 void radarRender(uint32_t nowMs, float rangeNm) {
   radarDrawBase(nowMs, rangeNm, true);
+  radarDrawAirports(rangeNm);
   radarDrawAircraft(rangeNm);
   radarPush();
 }

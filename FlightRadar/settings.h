@@ -18,8 +18,13 @@ struct Settings {
   char    audioUrl[256];
   char    adsbCustomUrl[192];
   char    trainStationCrs[8];   // 3-letter National Rail CRS code, e.g. "LIT"
-  char    trainApiKey[48];      // Rail Data Marketplace "Consumer key" - editable from the web
-                                 // setup portal, so no source/reflash is needed to set it
+  char    trainApiKey[96];      // Rail Data Marketplace "Consumer key" - editable from the web
+                                 // setup portal, so no source/reflash is needed to set it.
+                                 // Real keys run close to 48 characters; this was originally
+                                 // sized at 48 bytes total, which left zero room for the NUL
+                                 // terminator on a 48-character key and silently truncated the
+                                 // last character (or made the web form reject it outright as
+                                 // "too long") - sized generously now so that can't recur.
   double  homeLat;
   double  homeLon;
   uint8_t homeConfigured;

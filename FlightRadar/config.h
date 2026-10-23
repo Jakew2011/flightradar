@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "TRANSPORT TRACKER"
-#define FW_VERSION "6.3.2"
+#define FW_VERSION "6.3.4"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in
@@ -38,7 +38,7 @@
 // location/every other on-device setting back to this file's defaults;
 // leaving it alone (the normal case for an ordinary update) keeps everything
 // the user has configured on the device, even though config.h itself changed.
-#define SETTINGS_SCHEMA_VERSION 3
+#define SETTINGS_SCHEMA_VERSION 4
 
 // ===========================================================================
 //  WIFI

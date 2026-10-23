@@ -270,7 +270,7 @@ static void handleSave() {
       addNumberInput(b, "Announcement cooldown (ms)", "cooldown", g_settings.announceCooldownMs);
       b += F("<h3>Train departures</h3>");
       addTextInput(b, "Station (3-letter CRS code, e.g. LIT)", "traincrs", g_settings.trainStationCrs, 3);
-      addTextInput(b, "Rail Data Marketplace API key (Consumer key)", "trainkey", g_settings.trainApiKey, 47);
+      addTextInput(b, "Rail Data Marketplace API key (Consumer key)", "trainkey", g_settings.trainApiKey, 95);
       b += F("<p><small>Shown via the \"Switch mode\" button/menu item on the device. "
              "Get a free key by registering at raildata.org.uk, subscribing to the "
              "\"Live Departure Board\" product, then copying the \"Consumer key\" from its "

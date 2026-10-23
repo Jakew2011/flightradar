@@ -368,19 +368,25 @@ self-service sign-up page retired). "Switch mode" again goes back to radar.
 4. Click **View subscriptions**, open **Live Departure Board**, click the
    **Specification** tab, and scroll to **API access credentials**.
 5. Copy the **Consumer key** shown there.
-6. Paste it into `config.h`:
-   ```cpp
-   #define OPENLDBWS_API_KEY "your-consumer-key-here"
-   ```
-7. Set your station's 3-letter CRS code either in `config.h`
-   (`TRAIN_DEFAULT_STATION_CRS`) or on-device/web-portal afterwards (Advanced
-   menu, or the web setup portal's "Train departures" field) - no reflash
-   needed to change station.
+6. Paste it into the device's own web setup page (`http://<device-ip>/settings`
+   -> "Train departures" section -> "Rail Data Marketplace API key" field) and
+   save. **No source code access or reflashing needed** - this is a normal
+   setting stored on the device, exactly like the WiFi password or home
+   coordinates, so anyone using the finished device can set it themselves.
+   It's also settable from the Serial Monitor (`TRAINKEY=your-consumer-key-here`)
+   if you'd rather not use the web page. `OPENLDBWS_API_KEY` in `config.h` is
+   only the one-time starting value used the very first time the firmware
+   boots (or after a factory reset) - leave it blank if you're only ever
+   going to set the key from the web page.
+7. Set your station's 3-letter CRS code the same way - on-device (Advanced
+   menu), the web setup portal's "Train departures" field, or `config.h`
+   (`TRAIN_DEFAULT_STATION_CRS`, first-boot default only) - no reflash needed
+   to change station.
 
-If `OPENLDBWS_API_KEY` is left empty, "Switch mode" just stays on the radar
-screen and the train screen (if you do reach it) shows "NO RAIL DATA API KEY
-CONFIGURED". A wrong or expired key shows as an HTTP 401/403 error on that
-screen - re-check the Consumer key on the Specification tab above.
+If no API key is set, "Switch mode" just stays on the radar screen and the
+train screen (if you do reach it) shows "NO RAIL DATA API KEY CONFIGURED". A
+wrong or expired key shows as an HTTP 401/403 error on that screen -
+re-check the Consumer key on the Specification tab above.
 
 ## 13c. Find aircraft (search-and-lock)
 

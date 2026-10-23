@@ -2,6 +2,7 @@
 #include "util.h"
 #include "wifi_manager.h"
 #include "adsb_api.h"
+#include "train.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <math.h>
@@ -68,6 +69,7 @@ static void applyDefaults(Settings& s) {
   fr_copy(s.audioUrl, sizeof(s.audioUrl), MILITARY_WAV_URL);
   fr_copy(s.adsbCustomUrl, sizeof(s.adsbCustomUrl), ADSB_CUSTOM_URL_FORMAT);
   fr_copy(s.trainStationCrs, sizeof(s.trainStationCrs), TRAIN_DEFAULT_STATION_CRS);
+  fr_copy(s.trainApiKey, sizeof(s.trainApiKey), OPENLDBWS_API_KEY);
   s.homeLat = HOME_LAT;
   s.homeLon = HOME_LON;
   s.homeConfigured = settingsHomeValid(HOME_LAT, HOME_LON) &&
@@ -132,6 +134,7 @@ static void sanitize(Settings& s) {
   s.audioUrl[sizeof(s.audioUrl) - 1] = 0;
   s.adsbCustomUrl[sizeof(s.adsbCustomUrl) - 1] = 0;
   s.trainStationCrs[sizeof(s.trainStationCrs) - 1] = 0;
+  s.trainApiKey[sizeof(s.trainApiKey) - 1] = 0;
   {
     // CRS codes are always exactly 3 letters - sanitize anything stored or
     // typed into the portal down to that shape, upper-cased.
@@ -217,6 +220,7 @@ void settingsSave() {
   p.putString("wavurl", g_settings.audioUrl);
   p.putString("adscus", g_settings.adsbCustomUrl);
   p.putString("traincrs", g_settings.trainStationCrs);
+  p.putString("trainkey", g_settings.trainApiKey);
   p.putDouble("lat", g_settings.homeLat);
   p.putDouble("lon", g_settings.homeLon);
   p.putUChar("homeok", g_settings.homeConfigured);
@@ -295,6 +299,7 @@ void settingsBegin() {
   p.getString("wavurl", g_settings.audioUrl, sizeof(g_settings.audioUrl));
   p.getString("adscus", g_settings.adsbCustomUrl, sizeof(g_settings.adsbCustomUrl));
   p.getString("traincrs", g_settings.trainStationCrs, sizeof(g_settings.trainStationCrs));
+  p.getString("trainkey", g_settings.trainApiKey, sizeof(g_settings.trainApiKey));
   g_settings.serialBaud = p.getUInt("baud", g_settings.serialBaud);
   g_settings.wifiConnectTimeoutMs = p.getUInt("wictmo", g_settings.wifiConnectTimeoutMs);
   g_settings.wifiRetryMinMs = p.getUInt("wimin", g_settings.wifiRetryMinMs);
@@ -374,6 +379,12 @@ void settingsSetTrainStation(const char* crs) {
   settingsSave();
 }
 
+void settingsSetTrainApiKey(const char* key) {
+  fr_copy(g_settings.trainApiKey, sizeof(g_settings.trainApiKey), key);
+  sanitize(g_settings);
+  settingsSave();
+}
+
 bool settingsSetHome(double lat, double lon) {
   if (!settingsHomeValid(lat, lon)) return false;
   g_settings.homeLat = lat;
@@ -450,6 +461,7 @@ static void consoleHelp() {
   Serial.println(F("  PASS=<password>   set WiFi password"));
   Serial.println(F("  LAT=<degrees>     set home latitude  (e.g. LAT=51.47)"));
   Serial.println(F("  LON=<degrees>     set home longitude (e.g. LON=-0.4543)"));
+  Serial.println(F("  TRAINKEY=<key>    set the Rail Data Marketplace API key (blank to clear)"));
   Serial.println(F("  PORTAL            start the WiFi setup portal"));
   Serial.println(F("  RESTART           reboot"));
   Serial.println(F("  FACTORY           erase saved settings"));
@@ -490,6 +502,10 @@ static void consoleLine(char* line) {
   } else if (!strcasecmp(line, "LON") && val) {
     if (settingsSetHome(g_settings.homeLat, atof(val))) Serial.printf("Home longitude = %.5f\n", g_settings.homeLon);
     else Serial.println(F("Invalid longitude (-180..180)."));
+  } else if (!strcasecmp(line, "TRAINKEY") && val) {
+    settingsSetTrainApiKey(val);   // TRAINKEY= (nothing after the =) clears it
+    trainRequestNow();
+    Serial.println(g_settings.trainApiKey[0] ? F("Rail Data Marketplace API key saved.") : F("Rail Data Marketplace API key cleared."));
   } else if (!strcasecmp(line, "PORTAL")) {
     wifiStartPortal(true);
     Serial.println(F("Setup portal started."));

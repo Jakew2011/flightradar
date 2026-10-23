@@ -270,9 +270,12 @@ static void handleSave() {
       addNumberInput(b, "Announcement cooldown (ms)", "cooldown", g_settings.announceCooldownMs);
       b += F("<h3>Train departures</h3>");
       addTextInput(b, "Station (3-letter CRS code, e.g. LIT)", "traincrs", g_settings.trainStationCrs, 3);
+      addTextInput(b, "Rail Data Marketplace API key (Consumer key)", "trainkey", g_settings.trainApiKey, 47);
       b += F("<p><small>Shown via the \"Switch mode\" button/menu item on the device. "
-             "Requires a Rail Data Marketplace API key (OPENLDBWS_API_KEY) in config.h - "
-             "see the README for how to get one.</small></p>");
+             "Get a free key by registering at raildata.org.uk, subscribing to the "
+             "\"Live Departure Board\" product, then copying the \"Consumer key\" from its "
+             "Specification tab - see the README for the full steps. Paste it above and save; "
+             "no reflashing needed.</small></p>");
       b += F("<h3>Display settings</h3><label>Aircraft range</label><select name='range'>");
       for (uint8_t i = 0; i < RANGE_COUNT; ++i) {
         b += F("<option value='"); b += String(i); b += F("'");
@@ -395,16 +398,20 @@ static void handleSave() {
       g_settings.labelsEnabled = s_server->hasArg("labels") ? 1 : 0;
       g_settings.encoderReverse = s_server->hasArg("encinv") ? 1 : 0;
 
-      const char* stringNames[] = {"host", "apsid", "tz", "wavurl", "adscus"};
+      const char* stringNames[] = {"host", "apsid", "tz", "wavurl", "adscus", "trainkey"};
       char* stringValues[] = {g_settings.wifiHostname, g_settings.portalSsid, g_settings.timezone,
-                              g_settings.audioUrl, g_settings.adsbCustomUrl};
+                              g_settings.audioUrl, g_settings.adsbCustomUrl, g_settings.trainApiKey};
       const size_t stringSizes[] = {sizeof(g_settings.wifiHostname), sizeof(g_settings.portalSsid),
                                     sizeof(g_settings.timezone), sizeof(g_settings.audioUrl),
-                                    sizeof(g_settings.adsbCustomUrl)};
+                                    sizeof(g_settings.adsbCustomUrl), sizeof(g_settings.trainApiKey)};
+      bool trainKeyChanged = false;
       for (size_t i = 0; i < sizeof(stringNames) / sizeof(stringNames[0]); ++i) {
         if (!s_server->hasArg(stringNames[i])) continue;
         String text = s_server->arg(stringNames[i]);
         text.trim();
+        // host/apsid/tz (i<3) must not be blank; wavurl/adscus/trainkey may
+        // be left blank to clear them (an empty trainkey just disables the
+        // train board, same as never having set one).
         if (text.length() >= stringSizes[i] || ((i < 3) && !text.length())) {
           s_invalidSettingsInput = true;
           continue;
@@ -414,6 +421,7 @@ static void handleSave() {
           customUrlInvalid = true;
           continue;
         }
+        if (i == 5 && strcmp(stringValues[5], text.c_str()) != 0) trainKeyChanged = true;
         fr_copy(stringValues[i], stringSizes[i], text.c_str());
       }
       if (s_server->hasArg("appass") && s_server->arg("appass").length() > 0) {
@@ -428,6 +436,7 @@ static void handleSave() {
         if (crs.length() == 3) { settingsSetTrainStation(crs.c_str()); trainRequestNow(); }
         else if (crs.length()) s_invalidSettingsInput = true;   // settingsSetTrainStation() sanitizes to 3 letters or falls back - a non-3-length entry just didn't get applied
       }
+      if (trainKeyChanged) trainRequestNow();   // new/changed/cleared key: retry the board right away rather than waiting out the normal poll interval
       if (g_settings.wifiRetryMaxMs < g_settings.wifiRetryMinMs)
         { g_settings.wifiRetryMaxMs = g_settings.wifiRetryMinMs; s_invalidSettingsInput = true; }
       if (g_settings.adsbMinRequestGapMs > g_settings.adsbUpdateIntervalMs) {

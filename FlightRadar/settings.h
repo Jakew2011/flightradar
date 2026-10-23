@@ -18,6 +18,8 @@ struct Settings {
   char    audioUrl[256];
   char    adsbCustomUrl[192];
   char    trainStationCrs[8];   // 3-letter National Rail CRS code, e.g. "LIT"
+  char    trainApiKey[48];      // Rail Data Marketplace "Consumer key" - editable from the web
+                                 // setup portal, so no source/reflash is needed to set it
   double  homeLat;
   double  homeLon;
   uint8_t homeConfigured;
@@ -76,6 +78,7 @@ void     settingsFactoryReset();                // erase stored values, reload d
 void     settingsResetToUserDefaults();         // firmware defaults, but blank WiFi and coordinates
 void     settingsSetWifi(const char* ssid, const char* pass);   // stores + saves
 void     settingsSetTrainStation(const char* crs);              // validates (3 letters) + saves
+void     settingsSetTrainApiKey(const char* key);                // stores + saves, no reflash needed
 bool     settingsHomeValid(double lat, double lon);
 bool     settingsSetHome(double lat, double lon);               // validates + saves
 void     settingsClearHome();

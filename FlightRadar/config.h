@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "TRANSPORT TRACKER"
-#define FW_VERSION "6.2.9"
+#define FW_VERSION "6.3.2"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in
@@ -38,7 +38,7 @@
 // location/every other on-device setting back to this file's defaults;
 // leaving it alone (the normal case for an ordinary update) keeps everything
 // the user has configured on the device, even though config.h itself changed.
-#define SETTINGS_SCHEMA_VERSION 2
+#define SETTINGS_SCHEMA_VERSION 3
 
 // ===========================================================================
 //  WIFI
@@ -199,7 +199,7 @@
 // Pin is 48 on most current DevKitC-1 boards, 38 on older ones - if it's
 // still lit after flashing, try changing this to 38 (or check your board's
 // schematic/silkscreen for "RGB LED" or "WS2812").
-#define ONBOARD_RGB_LED_PIN        48      // set to -1 if your board has none / you don't want this
+#define ONBOARD_RGB_LED_PIN        -1      // set to -1 if your board has none / you don't want this
 
 // ===========================================================================
 //  AUDIO ANNOUNCEMENTS (I2S amplifier, e.g. MAX98357A, + speaker)
@@ -382,12 +382,19 @@
 //   3. Click Subscribe (it's free, no usage limit), accept the licence terms.
 //   4. Go to your subscriptions, open "Live Departure Board", click the
 //      "Specification" tab, and scroll to "API access credentials".
-//   5. Copy the "Consumer key" shown there into OPENLDBWS_API_KEY below.
-// Leave "" to disable the train board; "Switch mode" then just stays on the
-// radar screen.
+//   5. Copy the "Consumer key" shown there.
+// You do NOT need to edit this file (or reflash) to set it: the key lives in
+// the device's own saved settings, same as the WiFi password or home
+// coordinates, and is set from the web setup portal's Settings page ("Train
+// departures" section) - no source-code access needed. OPENLDBWS_API_KEY
+// here is only the one-time starting value copied into those saved settings
+// the very first time the firmware boots (or after a factory reset); once a
+// key is set via the web page it's remembered on the device and this define
+// is never looked at again. Leave both as "" if you don't want the key baked
+// into the firmware at all and will only ever set it from the web page.
 #define OPENLDBWS_API_KEY           ""
 #define OPENLDBWS_ENDPOINT          "https://api1.raildata.org.uk/1010-live-departure-board-dep1_2/LDBWS/api/20220120/GetDepartureBoard"
-// 3-letter CRS station code, e.g. "LIT" = Littlehampton. Changeable on the
+// 3-letter CRS station code, e.g. "" = . Changeable on the
 // device (Advanced menu) and in the web setup portal without reflashing.
 #define TRAIN_DEFAULT_STATION_CRS   "LKX"
 // How often the board is refreshed while it's the active screen (ms).

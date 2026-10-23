@@ -1154,7 +1154,7 @@ static void drawTrainScreen() {
     s.setTextColor(th.warn);
     s.drawString("NO RAIL DATA API KEY CONFIGURED", SCREEN_W / 2, 100, 2);
     s.setTextColor(th.textDim);
-    s.drawString("Set OPENLDBWS_API_KEY in config.h", SCREEN_W / 2, 130, 2);
+    s.drawString("Set it on the web setup page", SCREEN_W / 2, 130, 2);
   } else {
     TrainStatus st;
     trainGetStatus(st);

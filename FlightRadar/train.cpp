@@ -22,7 +22,7 @@ static uint16_t         s_count = 0;
 static volatile bool    s_active = false;   // only true while the train screen is on-screen
 static volatile bool    s_force = false;
 
-bool trainIsConfigured() { return OPENLDBWS_API_KEY[0] != 0; }
+bool trainIsConfigured() { return g_settings.trainApiKey[0] != 0; }
 
 static void trainTask(void*);
 static bool s_taskStarted = false;
@@ -88,7 +88,7 @@ static bool fetchBoard(const char* crs) {
   http.setConnectTimeout(TRAIN_CONNECT_TIMEOUT_MS);
   http.setTimeout(TRAIN_HTTP_TIMEOUT_MS);
   if (!http.begin(secure, url)) { setError("BAD URL", 0); return false; }
-  http.addHeader("x-apikey", OPENLDBWS_API_KEY);
+  http.addHeader("x-apikey", g_settings.trainApiKey);
   http.addHeader("User-Agent", "FlightRadar-ESP32/" FW_VERSION);
 
   int httpCode = http.GET();

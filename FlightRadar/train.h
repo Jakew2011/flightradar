@@ -36,4 +36,4 @@ void     trainSetActive(bool active);    // only polls the API while the train s
 void     trainRequestNow();              // force an immediate refresh (e.g. switching stations)
 void     trainGetStatus(TrainStatus& out);
 uint16_t trainGetServices(TrainService* out, uint16_t maxOut);
-bool     trainIsConfigured();            // true once config.h has an OPENLDBWS_API_KEY
+bool     trainIsConfigured();            // true once an API key is set (web portal or config.h default)

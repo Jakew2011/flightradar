@@ -8,7 +8,8 @@ void audioInit();          // call once from setup(); safe to call even if AUDIO
 void audioPlayMilitary();  // non-blocking: signals the audio task to (re)start the clip
 bool audioTestSpeaker();   // queue the configured WAV even when announcements are disabled
 void audioPlayEmergencyBeep(); // non-blocking urgent alert tone (squawk 7500)
-void audioPlayEmergency7700(); // non-blocking: loud 2s-on/1s-off pattern, 3 full cycles (squawk 7700)
+void audioPlayEmergency7700(); // non-blocking: 10 short 400ms beeps, 400ms gaps (~7.6s), squawk 7700 -
+                                // fires once per emergency, never repeats for the same one
 bool audioClipBusy();      // true while the military/test clip is actively playing over I2S -
                             // lets the UI keep a full-screen alert up for exactly the clip's duration
 

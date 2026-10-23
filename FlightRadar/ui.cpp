@@ -1664,26 +1664,39 @@ void uiUpdate(uint32_t now) {
       const Aircraft* alert = aircraftSelected();
       const uint32_t key = alert ? alert->key : 0;
       const uint16_t squawk = aircraftEmergencySquawk();
+      // Everything here - jumping to the radar screen, selecting/following
+      // the aircraft, the tone and toast - fires exactly ONCE, the moment a
+      // *new* emergency is detected (a different key, or the same aircraft
+      // starting a fresh squawk). It deliberately does NOT run on every
+      // frame any more: that used to force the screen back to SCR_RADAR and
+      // force MODE_SELECT roughly 25 times a second for as long as the
+      // emergency lasted, which made MENU/BACK/HOME and the encoder appear
+      // completely dead - there was no way to even open the menu, because
+      // whatever you pressed was undone a frame later. Now, once this has
+      // fired, BACK/HOME (see aircraftDismissEmergencyFollow() in
+      // aircraft.cpp) and the menu work normally again; the header alert and
+      // 7700/7500 tone already only ever played once per emergency anyway.
       if (key && (key != s_alertedKey || squawk != s_alertedSquawk)) {
         s_alertedKey = key;
         s_alertedSquawk = squawk;
         if (squawk == 7700) audioPlayEmergency7700();
         else audioPlayEmergencyBeep();
         toast(squawk == 7500 ? "HIJACK SQUAWK 7500" : "EMERGENCY SQUAWK 7700", now, 5000);
+        if (s_screen != SCR_RADAR) {
+          // An active emergency squawk always wins, even over the train
+          // board - it needs the radar screen specifically to show/follow
+          // the aircraft, so this bypasses closeToRadar()'s train-mode
+          // routing on purpose. Only done on the initial alert, not forced
+          // back every frame afterwards.
+          s_screen = SCR_RADAR;
+          s_editing = false;
+          s_dirty = true;
+          s_panelDirty = true;
+          s_hdrKey[0] = 0;
+          trainSetActive(false);
+        }
         s_mode = MODE_SELECT;
       }
-      if (s_screen != SCR_RADAR) {
-        // An active emergency squawk always wins, even over the train board -
-        // it needs the radar screen specifically to show/follow the aircraft,
-        // so this bypasses closeToRadar()'s train-mode routing on purpose.
-        s_screen = SCR_RADAR;
-        s_editing = false;
-        s_dirty = true;
-        s_panelDirty = true;
-        s_hdrKey[0] = 0;
-        trainSetActive(false);
-      }
-      s_mode = MODE_SELECT;
     } else {
       s_alertedKey = 0;
       s_alertedSquawk = 0;

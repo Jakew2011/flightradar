@@ -191,13 +191,18 @@ static bool playEmergencyTone() {
   return playTone(1000, 120, 6000);
 }
 
-// Squawk 7700 specifically: loud, hard to miss, 3 full cycles of a 2 s beep
-// followed by a 1 s silence (9 s total). Deliberately not interruptible
-// mid-pattern - this *is* the emergency alert.
+// Squawk 7700 specifically: loud, hard to miss, and CLEARLY intermittent -
+// 10 short 400 ms beeps with 400 ms of silence between them (7.6 s total,
+// comfortably under the 10 s cap), not one long unbroken tone. Deliberately
+// not interruptible mid-pattern - this *is* the emergency alert. It is only
+// ever started once per emergency (see the key/squawk-change gate in
+// ui.cpp's uiUpdate()) - once this pattern finishes, it is not replayed
+// again for that same aircraft/squawk, even if it keeps squawking 7700 for
+// the rest of the time it's in range.
 static bool playEmergency7700Pattern() {
-  for (uint8_t cycle = 0; cycle < 3; ++cycle) {
-    if (!playTone(1000, 2000, 20000)) return false;
-    if (cycle < 2) vTaskDelay(pdMS_TO_TICKS(1000));
+  for (uint8_t beep = 0; beep < 10; ++beep) {
+    if (!playTone(1000, 400, 20000)) return false;
+    if (beep < 9) vTaskDelay(pdMS_TO_TICKS(400));
   }
   return true;
 }

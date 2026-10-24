@@ -19,6 +19,10 @@ struct TrainService {
   char etd[20];           // "On time" / "Delayed" / "Cancelled" / revised "HH:MM"
   char destination[48];
   char platform[4];       // "" if not yet allocated by the signaller
+  char operatorName[24];  // train operating company, e.g. "Southern" ("" if not given)
+  char callingPoints[160]; // intermediate stops, comma-separated, in order ("" if none/unknown -
+                           // a non-stop or destination-only service, or GetDepBoardWithDetails
+                           // simply didn't return a calling-point list for it)
 };
 
 struct TrainStatus {

@@ -255,10 +255,20 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
     for (uint16_t i = 0; i < s_count; ++i) {
       const Aircraft& a = s_list[i];
       if ((uint32_t)(now - a.reportMs) > g_settings.aircraftMaxAgeMs) continue;
-      char csNorm[16], regNorm[16];
+      char csNorm[16], regNorm[16], icaoNorm[16];
       normalizeLockToken(csNorm, sizeof(csNorm), a.callsign);
       normalizeLockToken(regNorm, sizeof(regNorm), a.registration);
-      if (!strcmp(csNorm, s_lockQuery) || !strcmp(regNorm, s_lockQuery)) { locked = &a; break; }
+      // Also match on the ICAO hex address - aircraftDisplayName() (the
+      // label actually shown on the radar screen) falls back to this for
+      // any aircraft that isn't broadcasting a callsign or registration,
+      // which is common. Without this, searching for exactly what's on
+      // screen for one of those aircraft could never match (it isn't the
+      // callsign or registration field at all), so it would sit on
+      // "SEARCHING..." forever even with the aircraft plainly visible.
+      normalizeLockToken(icaoNorm, sizeof(icaoNorm), a.icao);
+      if (!strcmp(csNorm, s_lockQuery) || !strcmp(regNorm, s_lockQuery) || !strcmp(icaoNorm, s_lockQuery)) {
+        locked = &a; break;
+      }
     }
   }
   s_lockFound = locked != nullptr;
@@ -326,20 +336,29 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
     a.selected = s_hasSel && a.key == s_selKey;
     if (a.selected) selFound = true;
     if (a.visible) vis++;
-    if (a.visible && a.military) {
-      visMil++;
-      // Announce once per appearance, not on a repeating timer: as long as
-      // the aircraft stays continuously visible, announceRemember() below
-      // keeps re-extending its cooldown window every pass, so it never
-      // expires and never re-fires. It only actually expires (and so
-      // announces again) once the aircraft has been gone - out of range, out
-      // of the age window, landed, whatever - for a full cooldown period.
-      if (!announceOnCooldown(a.key, now) && s_announcePending < 255) s_announcePending++;
-      announceRemember(a.key, now);
-    }
-    if (a.visible && a.service != SVC_NONE) {
-      visSvc++;
-      if (!announceOnCooldown(a.key, now)) serviceQueuePush(a.service);
+    // Announce once per appearance, not on a repeating timer - and keep the
+    // cooldown alive for as long as this aircraft is still being TRACKED at
+    // all (reported by the feed within aircraftMaxAgeMs), not only while
+    // it's currently inside the chosen display range. Refreshing on range-
+    // visibility alone meant a police/coastguard/air-ambulance helicopter
+    // loitering or orbiting a scene near the edge of a small chosen range
+    // would dip in and out of "visible" on every lap; each dip let the
+    // cooldown start counting down, so it re-announced on every single
+    // re-entry - which is what made those tones sound never-ending,
+    // especially once it had drifted out of range and back. Refreshing here
+    // instead means it's announced once and then left alone for a full
+    // cooldown period even while it keeps crossing the range boundary,
+    // exactly like a military aircraft already behaves.
+    if (a.military || a.service != SVC_NONE) {
+      if (a.visible) {
+        if (a.military) {
+          visMil++;
+          if (!announceOnCooldown(a.key, now) && s_announcePending < 255) s_announcePending++;
+        } else {
+          visSvc++;
+          if (!announceOnCooldown(a.key, now)) serviceQueuePush(a.service);
+        }
+      }
       announceRemember(a.key, now);
     }
     s_list[w++] = a;

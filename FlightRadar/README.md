@@ -388,12 +388,24 @@ train screen (if you do reach it) shows "NO RAIL DATA API KEY CONFIGURED". A
 wrong or expired key shows as an HTTP 401/403 error on that screen -
 re-check the Consumer key on the Specification tab above.
 
+Below the departure list, the bottom panel cycles through the visible
+departures a few seconds at a time with a proper station-announcer-style
+line - time and destination, the stops it's calling at, and which operator
+runs it (e.g. "10:15 TO BRIGHTON" / "CALLING AT: TBD, GTW, HOR, HOVE" /
+"OPERATED BY SOUTHERN") - text on screen only, no speech (the hardware has
+no text-to-speech capability). This uses the **GetDepBoardWithDetails**
+endpoint rather than the plain GetDepartureBoard one; same key, same setup,
+just a bit more data per service.
+
 ## 13c. Find aircraft (search-and-lock)
 
 **Main menu > Find aircraft** opens an 8-character entry screen (turn to pick
 each character, press to move on - same idea as the train station editor).
-Enter a callsign (e.g. `BAW123`) or a registration (e.g. `G-ABCD`, hyphen
-optional - it's ignored) and press **LOCK**. From then on, the radar centres
+Enter a callsign (e.g. `BAW123`), a registration (e.g. `G-ABCD`, hyphen
+optional - it's ignored), or the ICAO hex address shown for an aircraft that
+isn't broadcasting either of those (e.g. `4CA1B2` - whatever's actually on
+screen as that aircraft's label is always what to search for), and press
+**LOCK**. From then on, the radar centres
 on and auto-selects that aircraft the moment it's seen - even if it isn't in
 range yet, or temporarily drops out and comes back - until you clear it.
 An active 7500/7700 emergency still always takes priority for the radar's

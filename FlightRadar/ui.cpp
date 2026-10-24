@@ -1021,7 +1021,7 @@ static void drawAircraftSearchEdit() {
   panelBegin();
   panelText(14, "TURN: CHANGE CHARACTER", 2, th.text);
   panelText(38, "PRESS: NEXT     BACK: CANCEL", 2, th.text);
-  panelText(62, "Callsign (e.g. BAW123) or reg (e.g. G-ABCD)", 1, th.textDim);
+  panelText(62, "Callsign, reg (G-ABCD) or ICAO hex (4CA1B2)", 1, th.textDim);
   if (aircraftLockActive()) panelText(80, "Locked - leave blank and press LOCK to clear", 1, th.ok);
   else if (aircraftLockPending()) panelText(80, "Searching - will lock on when it appears", 1, th.select);
   else panelText(80, "Leave blank and press LOCK to clear an active lock", 1, th.textDim);
@@ -1144,10 +1144,26 @@ static void drawAboutScreen(uint32_t now) {
 // ===========================================================================
 //  Train departure board
 // ===========================================================================
+// Station-style "This is the X service to Y, calling at..." announcement
+// line, cycling through the visible departures a few seconds at a time -
+// text only, no speech (the hardware has no TTS). Index/timer are their own
+// static state (not tied to s_screen) so leaving and returning to the train
+// board just carries on rather than always restarting at the first train.
+static uint8_t  s_annIndex = 0;
+static uint32_t s_annNextAt = 0;
+#define TRAIN_ANNOUNCE_PERIOD_MS 6000UL
+
 static void drawTrainScreen() {
   const Theme& th = themeCurrent();
   TFT_eSprite& s = spRadar;
   s.fillSprite(th.bg);
+
+  // Filled in below (configured + at least one departure); rendered in the
+  // panel after the sprite is pushed, so it survives past the scope that
+  // has "rows"/"n".
+  char annLine1[40] = "";   // "HH:MM TO DESTINATION"
+  char annLine2[56] = "";   // "CALLING AT: ..." (or "NON-STOP" / omitted if unknown)
+  char annLine3[32] = "";   // "OPERATED BY ..." (omitted if the API didn't give one)
 
   if (!trainIsConfigured()) {
     s.setTextDatum(MC_DATUM);
@@ -1204,6 +1220,32 @@ static void drawTrainScreen() {
         s.drawString(dest, 150, y + 6, 2);
         if (i + 1 < maxRows) s.drawFastHLine(4, y + rowH - 2, SCREEN_W - 8, th.gridDim);
       }
+
+      // Station-announcer-style line for one departure at a time, cycling
+      // every few seconds - real text, no speech (see the comment above
+      // s_annIndex). Skips cancelled services (nothing useful to "call out"
+      // for one that isn't running) and wraps back to the first eligible row
+      // once it reaches the end of the visible list.
+      const uint32_t now = millis();
+      if ((int32_t)(now - s_annNextAt) >= 0) {
+        s_annNextAt = now + TRAIN_ANNOUNCE_PERIOD_MS;
+        s_annIndex = (uint8_t)((s_annIndex + 1) % maxRows);
+      }
+      uint16_t annRow = s_annIndex < maxRows ? s_annIndex : 0;
+      for (uint16_t tries = 0; tries < maxRows; tries++) {
+        if (strcasecmp(rows[annRow].etd, "Cancelled") != 0) break;
+        annRow = (uint16_t)((annRow + 1) % maxRows);
+      }
+      const TrainService& ann = rows[annRow];
+      if (strcasecmp(ann.etd, "Cancelled") != 0) {
+        snprintf(annLine1, sizeof(annLine1), "%s TO %s", ann.std, ann.destination);
+        if (ann.callingPoints[0]) {
+          snprintf(annLine2, sizeof(annLine2), "CALLING AT: %s", ann.callingPoints);
+        } else {
+          fr_copy(annLine2, sizeof(annLine2), "NON-STOP, OR CALLING POINTS UNKNOWN");
+        }
+        if (ann.operatorName[0]) snprintf(annLine3, sizeof(annLine3), "OPERATED BY %s", ann.operatorName);
+      }
     }
     if (st.nrccMessage[0]) {
       s.setTextDatum(TL_DATUM);
@@ -1218,6 +1260,11 @@ static void drawTrainScreen() {
   panelBegin();
   panelText(14, "PRESS: REFRESH   MENU: SETTINGS", 2, th.text);
   panelText(38, "BACK: BACK TO RADAR", 2, th.text);
+  if (annLine1[0]) {
+    panelText(66, annLine1, 2, th.select);
+    if (annLine2[0]) panelText(88, annLine2, 1, th.text);
+    if (annLine3[0]) panelText(104, annLine3, 1, th.textDim);
+  }
   panelPush();
   drawHeader("TRAIN BOARD", "", "", trainIsConfigured() ? th.ok : th.warn);
 }

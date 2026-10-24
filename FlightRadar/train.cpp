@@ -152,6 +152,44 @@ static bool fetchBoard(const char* crs) {
         dest = destArr[0]["locationName"] | "";
       fr_copy(out.destination, sizeof(out.destination), dest[0] ? dest : "UNKNOWN");
 
+      const char* op = svc["operator"] | "";
+      fr_copy(out.operatorName, sizeof(out.operatorName), op);
+
+      // "subsequentCallingPoints" is an array of calling-point LISTS (plural
+      // because a service that splits en route has more than one onward
+      // list) - each holding {"callingPoint": [{locationName, st, ...}, ...]}.
+      // The first list is the service's own ongoing stops, which is all a
+      // one-line "calling at..." announcement needs; a split service's other
+      // portion(s) are left out rather than mixed in and read out as if they
+      // were all one train.
+      out.callingPoints[0] = 0;
+      JsonVariantConst cpLists = svc["subsequentCallingPoints"];
+      if (cpLists.is<JsonArrayConst>() && cpLists.size() > 0) {
+        JsonVariantConst points = cpLists[0]["callingPoint"];
+        if (points.is<JsonArrayConst>()) {
+          size_t used = 0;
+          bool first = true;
+          for (JsonVariantConst p : points.as<JsonArrayConst>()) {
+            const char* name = p["locationName"] | "";
+            if (!name[0]) continue;
+            const size_t nameLen = strlen(name);
+            const size_t sepLen = first ? 0 : 2;                // ", "
+            // Leave room for a trailing " ..." marker if this doesn't fit,
+            // so a long calling-point list is truncated cleanly rather than
+            // cut off mid-station-name.
+            if (used + sepLen + nameLen + 4 >= sizeof(out.callingPoints)) {
+              fr_copy(out.callingPoints + used, sizeof(out.callingPoints) - used, " ...");
+              break;
+            }
+            if (!first) { memcpy(out.callingPoints + used, ", ", 2); used += 2; }
+            memcpy(out.callingPoints + used, name, nameLen);
+            used += nameLen;
+            out.callingPoints[used] = 0;
+            first = false;
+          }
+        }
+      }
+
       ++n;
     }
   }

@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "TRANSPORT TRACKER"
-#define FW_VERSION "6.3.4"
+#define FW_VERSION "6.3.6"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in
@@ -393,7 +393,11 @@
 // is never looked at again. Leave both as "" if you don't want the key baked
 // into the firmware at all and will only ever set it from the web page.
 #define OPENLDBWS_API_KEY           ""
-#define OPENLDBWS_ENDPOINT          "https://api1.raildata.org.uk/1010-live-departure-board-dep1_2/LDBWS/api/20220120/GetDepartureBoard"
+// GetDepBoardWithDetails (not the plain GetDepartureBoard) - same API, same
+// key, but each service also carries its operator name and calling points,
+// which the train board uses for the on-screen "calling at... operated
+// by..." announcement line.
+#define OPENLDBWS_ENDPOINT          "https://api1.raildata.org.uk/1010-live-departure-board-dep1_2/LDBWS/api/20220120/GetDepBoardWithDetails"
 // 3-letter CRS station code, e.g. "" = . Changeable on the
 // device (Advanced menu) and in the web setup portal without reflashing.
 #define TRAIN_DEFAULT_STATION_CRS   "LKX"

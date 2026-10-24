@@ -233,7 +233,30 @@ static void handleSave() {
       addNumberInput(b, "Retry minimum (ms)", "wimin", g_settings.wifiRetryMinMs);
       addNumberInput(b, "Retry maximum (ms)", "wimax", g_settings.wifiRetryMaxMs);
       addNumberInput(b, "Portal timeout (ms)", "aptmo", g_settings.portalTimeoutMs);
-      addTextInput(b, "Time zone (POSIX TZ string)", "tz", g_settings.timezone, 47);
+      // Time is already synced over WiFi automatically (NTP, on every boot
+      // and whenever this changes) - what this field controls is how that
+      // UTC time gets converted to local civil time, including *when* the
+      // clocks go forward/back. A plain fixed offset like "GMT+1" would need
+      // changing by hand twice a year; the preset below instead fills in a
+      // full POSIX TZ rule (built-in default is already the UK one), which
+      // the device re-evaluates itself every time it syncs - so once set,
+      // the clock changes are handled on their own, no further action ever
+      // needed, in BST or back to GMT.
+      b += F("<label>Time zone</label><select onchange=\"if(this.value)document.getElementById('tz').value=this.value;\">"
+             "<option value=''>Preset (or type your own below)...</option>"
+             "<option value='GMT0BST,M3.5.0/1,M10.5.0'>United Kingdom / Ireland</option>"
+             "<option value='UTC0'>UTC (no clock changes)</option>"
+             "<option value='CET-1CEST,M3.5.0,M10.5.0/3'>Central Europe</option>"
+             "<option value='EST5EDT,M3.2.0,M11.1.0'>US Eastern</option>"
+             "<option value='PST8PDT,M3.2.0,M11.1.0'>US Pacific</option>"
+             "</select>");
+      b += F("<label>Time zone (POSIX TZ string)</label><input id='tz' name='tz' maxlength='47' value='");
+      htmlEscape(b, g_settings.timezone);
+      b += F("'>"
+             "<p><small>Picking a preset above fills this in for you; the clock then "
+             "switches itself between standard and daylight-saving time on the correct "
+             "dates with no further changes needed - it only needs to be set again if you "
+             "move to a different time zone.</small></p>");
       b += F("<h3>Aircraft data</h3><label>ADS-B source mode</label><select name='adsmode'>");
       const char* modes[] = {"Both free sources", "adsb.lol only", "adsb.fi only", "Custom URL", "airplanes.live only"};
       for (uint8_t i = 0; i < 5; ++i) {

@@ -477,7 +477,21 @@ static void photoTask(void*) {
 }
 
 void aircraftPhotoInit() {
-  const BaseType_t result = xTaskCreatePinnedToCore(photoTask, "aircraft_photo", 16384,
+  // 16 KB here used to be enough for a single lookup, but lookupPhoto() can
+  // nest two full HTTPS round trips deep at once (e.g. lookupJetApi()'s own
+  // WiFiClientSecure/HTTPClient/JsonDocument are all still live on the stack
+  // while it calls downloadPhotoCandidate() -> downloadJpeg(), which opens a
+  // SECOND WiFiClientSecure/HTTPClient of its own, plus a 1280-byte URL
+  // buffer, all at the same time) - exactly the kind of deep-nested-buffers
+  // stack overflow already diagnosed for the main loop task (see the
+  // getArduinoLoopTaskStackSize() comment in the .ino), just in this task's
+  // own stack instead. Scrolling quickly through many different aircraft
+  // drives a steady stream of these lookups back-to-back, each one a chance
+  // to hit it - which is consistent with crashes turning up specifically
+  // while scrolling through the aircraft list. Sized generously here rather
+  // than trimmed to a guess, since corrupting memory silently is far worse
+  // than a few KB of unused stack on a board with plenty of RAM.
+  const BaseType_t result = xTaskCreatePinnedToCore(photoTask, "aircraft_photo", 32768,
                                                     nullptr, 1, nullptr, 0);
   portENTER_CRITICAL(&s_photoMux);
   s_taskStarted = result == pdPASS;

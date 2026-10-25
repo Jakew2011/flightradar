@@ -42,6 +42,16 @@ float settingsRangeNm() {
   return (float)RANGES_NM[i];
 }
 
+bool settingsNightModeActive() {
+  if (!g_settings.nightModeEnabled) return false;
+  struct tm t;
+  if (!clockGet(&t)) return false;          // time not synced yet: don't guess
+  const int h = t.tm_hour;
+  return (g_settings.nightStartHour > g_settings.nightEndHour)
+           ? (h >= g_settings.nightStartHour || h < g_settings.nightEndHour)
+           : (h >= g_settings.nightStartHour && h < g_settings.nightEndHour);
+}
+
 // Only reset saved settings when the Settings struct's *shape* changes, not
 // when config.h's *values* change. This used to hash the fully-applied
 // defaults (every WiFi SSID/password, URL, timeout, etc. from config.h), so

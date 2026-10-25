@@ -411,6 +411,18 @@ static void audioTask(void*) {
                     (unsigned long)(s_i2sWriteCalls - clipCallsBefore));
       s_clipBusy = false;
     }
+    // Explicitly silence the I2S DMA buffers once everything requested this
+    // wake has been played. The legacy I2S driver keeps looping whatever was
+    // in its DMA buffers for as long as nothing new is written - so the last
+    // ~tens of milliseconds of audio (the tail of the final beep in a
+    // pattern) would otherwise keep repeating on a loop, inaudible-gap-free,
+    // for as long as this task sits idle waiting for the next request. That
+    // is almost certainly what "the 7700 beep never stops" actually was:
+    // not the 10-beep pattern itself running long, but its last beep's
+    // buffer looping forever afterwards because nothing ever told the
+    // hardware to stop. Done once here (not after each individual tone)
+    // so a multi-tone pattern isn't interrupted by a silence gap mid-pattern.
+    i2s_zero_dma_buffer(I2S_NUM_0);
   }
 }
 
@@ -477,11 +489,25 @@ void audioInit() {
   Serial.println("[audio] ===== audioInit() done =====");
 }
 
+// Night dimming ("sleep mode") mutes every automatic sound this device makes
+// - military/police/coastguard/air-ambulance announcements and the 7500/7700
+// emergency tones alike - for as long as the clock is inside the configured
+// night window, so it stays quiet next to a bed overnight. The manually
+// triggered speaker test (audioTestSpeaker(), someone pressing the test
+// button on purpose) is deliberately NOT gated by this - that's an explicit
+// request, not ambient noise.
+static bool audioSuppressedForNight() {
+  if (!settingsNightModeActive()) return false;
+  AUDIO_LOGV("[audio][v] suppressed: night mode is active\n");
+  return true;
+}
+
 void audioPlayMilitary() {
   if (!g_settings.audioEnabled) {
     AUDIO_LOGV("[audio][v] audioPlayMilitary: ignored, announcements disabled in settings\n");
     return;
   }
+  if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_CLIP, eSetBits) != pdPASS)
     Serial.println("[audio] military announcement unavailable: audio task is not ready");
 }
@@ -504,26 +530,31 @@ bool audioTestSpeaker() {
 }
 
 void audioPlayEmergencyBeep() {
+  if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_ALERT, eSetBits) != pdPASS)
     Serial.println("[audio] emergency beep unavailable: audio task is not ready");
 }
 
 void audioPlayPolice() {
+  if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_POLICE, eSetBits) != pdPASS)
     Serial.println("[audio] police tone unavailable: audio task is not ready");
 }
 
 void audioPlayCoastguard() {
+  if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_COASTGUARD, eSetBits) != pdPASS)
     Serial.println("[audio] coastguard tone unavailable: audio task is not ready");
 }
 
 void audioPlayAirAmbulance() {
+  if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_AIRAMB, eSetBits) != pdPASS)
     Serial.println("[audio] air ambulance tone unavailable: audio task is not ready");
 }
 
 void audioPlayEmergency7700() {
+  if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_ALERT_7700, eSetBits) != pdPASS)
     Serial.println("[audio] 7700 alert unavailable: audio task is not ready");
 }

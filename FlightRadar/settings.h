@@ -89,6 +89,12 @@ bool     settingsSetHome(double lat, double lon);               // validates + s
 void     settingsClearHome();
 uint32_t settingsHomeRev();                     // increments when home changes
 float    settingsRangeNm();
+// True right now if "Night dimming" is on AND the clock is within the
+// configured night window. Shared by the display (dims the screen) and the
+// audio task (mutes all tones/clips/announcements) so both follow exactly
+// the same window from one place rather than two copies of the same hour
+// check potentially drifting apart.
+bool     settingsNightModeActive();
 uint8_t  settingsRangeIndexFor(uint16_t nm);
 void     settingsMarkDirty(uint32_t nowMs);     // save later (flash-wear friendly)
 void     settingsService(uint32_t nowMs);       // call from loop()

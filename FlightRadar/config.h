@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "TRANSPORT TRACKER"
-#define FW_VERSION "6.3.8"
+#define FW_VERSION "6.4.1"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in
@@ -332,7 +332,7 @@
 #define AIRCRAFT_BLEND_MS           1500
 // Maximum number of aircraft kept (nearest ones win). Each uses ~180 bytes
 // of PSRAM (x3 buffers).
-#define MAX_AIRCRAFT                300
+#define MAX_AIRCRAFT                999
 // 1 = also show aircraft reported as being on the ground.
 #define SHOW_GROUND_AIRCRAFT        0
 

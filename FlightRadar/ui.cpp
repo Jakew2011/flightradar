@@ -257,17 +257,7 @@ static void drawMilitaryAlert() {
 //  Brightness (with optional night mode)
 // ===========================================================================
 static void applyBrightness() {
-  uint8_t target = g_settings.brightness;
-  if (g_settings.nightModeEnabled) {
-    struct tm t;
-    if (clockGet(&t)) {
-    const int h = t.tm_hour;
-    const bool night = (g_settings.nightStartHour > g_settings.nightEndHour)
-                         ? (h >= g_settings.nightStartHour || h < g_settings.nightEndHour)
-                         : (h >= g_settings.nightStartHour && h < g_settings.nightEndHour);
-    if (night) target = g_settings.nightBrightness;
-    }
-  }
+  uint8_t target = settingsNightModeActive() ? g_settings.nightBrightness : g_settings.brightness;
   if (target != s_effBrightness) {
     s_effBrightness = target;
     displaySetBrightness(target);
@@ -1144,26 +1134,28 @@ static void drawAboutScreen(uint32_t now) {
 // ===========================================================================
 //  Train departure board
 // ===========================================================================
-// Station-style "This is the X service to Y, calling at..." announcement
-// line, cycling through the visible departures a few seconds at a time -
-// text only, no speech (the hardware has no TTS). Index/timer are their own
-// static state (not tied to s_screen) so leaving and returning to the train
-// board just carries on rather than always restarting at the first train.
-static uint8_t  s_annIndex = 0;
-static uint32_t s_annNextAt = 0;
-#define TRAIN_ANNOUNCE_PERIOD_MS 6000UL
+// Continuously scrolling station-announcer ticker along the bottom of the
+// board - "10:15 TO BRIGHTON - CALLING AT TBD, GTW, HOR, HOVE - OPERATED BY
+// SOUTHERN  *  10:22 TO ... " and so on for every (non-cancelled) departure
+// in one unbroken scroll, same idea as a real platform display's ticker -
+// text only, no speech (the hardware has no TTS). s_tickerX is persistent,
+// frame-rate-independent (driven off elapsed ms, not frame count) scroll
+// state; it is its own static state (not tied to s_screen) so leaving and
+// returning to the train board just carries on rather than snapping back.
+static float    s_tickerX = 0;
+static uint32_t s_tickerLastMs = 0;
+#define TRAIN_TICKER_PX_PER_SEC 55.0f
+#define TRAIN_TICKER_GAP_PX     60
 
 static void drawTrainScreen() {
   const Theme& th = themeCurrent();
   TFT_eSprite& s = spRadar;
+  const uint32_t now = millis();
   s.fillSprite(th.bg);
 
-  // Filled in below (configured + at least one departure); rendered in the
-  // panel after the sprite is pushed, so it survives past the scope that
-  // has "rows"/"n".
-  char annLine1[40] = "";   // "HH:MM TO DESTINATION"
-  char annLine2[56] = "";   // "CALLING AT: ..." (or "NON-STOP" / omitted if unknown)
-  char annLine3[32] = "";   // "OPERATED BY ..." (omitted if the API didn't give one)
+  // Built below (configured + at least one eligible departure) and scrolled
+  // in the dedicated ticker strip at the bottom of the sprite.
+  char ticker[256] = "";
 
   if (!trainIsConfigured()) {
     s.setTextDatum(MC_DATUM);
@@ -1177,82 +1169,123 @@ static void drawTrainScreen() {
     TrainService rows[TRAIN_MAX_SERVICES];
     const uint16_t n = trainGetServices(rows, TRAIN_MAX_SERVICES);
 
+    // Header strip: station name on a shaded bar, like the destination board
+    // signage above a real platform screen.
+    s.fillRect(0, 0, SCREEN_W, 20, th.gridDim);
     s.setTextDatum(TL_DATUM);
     s.setTextColor(th.text);
-    char title[48];
+    char title[40];
     snprintf(title, sizeof(title), "%s",
              st.locationName[0] ? st.locationName : g_settings.trainStationCrs);
-    s.drawString(title, 6, 4, 2);
+    s.drawString(title, 6, 3, 2);
+    s.setTextColor(th.ok);
+    s.setTextDatum(TR_DATUM);
+    s.drawString("DEPARTURES", SCREEN_W - 6, 3, 2);
 
-    // The panel is only SCREEN_W (320) px wide, so each departure gets two
-    // short lines rather than one cramped row: "HH:MM  PLAT n  STATUS" and
-    // the destination name underneath (truncated if it doesn't fit).
-    s.drawFastHLine(4, 22, SCREEN_W - 8, th.grid);
+    // Column header row, like the printed column labels on a real board.
+    const int colTime = 6, colDest = 58, colPlat = 220, colExp = 256;
+    s.fillRect(0, 20, SCREEN_W, 16, th.grid);
+    s.setTextDatum(TL_DATUM);
+    s.setTextColor(th.bg);
+    s.drawString("TIME", colTime, 22, 1);
+    s.drawString("DESTINATION", colDest, 22, 1);
+    s.drawString("PLAT", colPlat, 22, 1);
+    s.drawString("EXPECTED", colExp, 22, 1);
+
+    const int listTop = 38;
+    const int tickerH = 22;
+    const int listBottom = RADAR_H - tickerH;
 
     if (!st.lastOk && n == 0) {
       s.setTextDatum(MC_DATUM);
       s.setTextColor(th.warn);
-      s.drawString(st.lastError[0] ? st.lastError : "NO DATA YET", SCREEN_W / 2, 90, 2);
+      s.drawString(st.lastError[0] ? st.lastError : "NO DATA YET", SCREEN_W / 2, (listTop + listBottom) / 2, 2);
     } else if (n == 0) {
       s.setTextDatum(MC_DATUM);
       s.setTextColor(th.textDim);
-      s.drawString("NO DEPARTURES DUE", SCREEN_W / 2, 90, 2);
+      s.drawString("NO DEPARTURES DUE", SCREEN_W / 2, (listTop + listBottom) / 2, 2);
     } else {
-      const int rowH = 32;
-      const uint16_t maxRows = (uint16_t)fr_clamp((RADAR_H - 28) / rowH, 1, (int)n);
+      const int rowH = 24;
+      const uint16_t maxRows = (uint16_t)fr_clamp((listBottom - listTop) / rowH, 1, (int)n);
       for (uint16_t i = 0; i < maxRows; i++) {
-        const int y = 28 + i * rowH;
+        const int y = listTop + i * rowH;
         const TrainService& r = rows[i];
         const bool cancelled = strcasecmp(r.etd, "Cancelled") == 0;
         const bool delayed = !cancelled && strcasecmp(r.etd, "On time") != 0 && strcasecmp(r.etd, "?") != 0;
+        if (i & 1) s.fillRect(0, y, SCREEN_W, rowH, th.gridDim);   // alternating row shading
         s.setTextDatum(TL_DATUM);
         s.setTextColor(cancelled ? th.textDim : th.text);
-        s.drawString(r.std, 6, y, 2);
-        char plat[12];
-        snprintf(plat, sizeof(plat), "PL %s", r.platform);
-        s.setTextColor(th.textDim);
-        s.drawString(plat, 60, y + 3, 1);
-        s.setTextColor(cancelled ? th.warn : delayed ? th.warn : th.ok);
-        s.drawString(r.etd, 60, y + 14, 1);
-        char dest[30];
+        s.drawString(r.std, colTime, y + 4, 2);
+        char dest[18];
         fr_copy(dest, sizeof(dest), r.destination);
-        s.setTextColor(cancelled ? th.textDim : th.text);
-        s.drawString(dest, 150, y + 6, 2);
-        if (i + 1 < maxRows) s.drawFastHLine(4, y + rowH - 2, SCREEN_W - 8, th.gridDim);
+        s.drawString(dest, colDest, y + 4, 2);
+        char plat[6];
+        fr_copy(plat, sizeof(plat), r.platform);
+        s.setTextColor(th.textDim);
+        s.drawString(plat, colPlat, y + 4, 2);
+        s.setTextColor(cancelled ? th.warn : delayed ? th.warn : th.ok);
+        s.drawString(r.etd, colExp, y + 4, 1);
       }
 
-      // Station-announcer-style line for one departure at a time, cycling
-      // every few seconds - real text, no speech (see the comment above
-      // s_annIndex). Skips cancelled services (nothing useful to "call out"
-      // for one that isn't running) and wraps back to the first eligible row
-      // once it reaches the end of the visible list.
-      const uint32_t now = millis();
-      if ((int32_t)(now - s_annNextAt) >= 0) {
-        s_annNextAt = now + TRAIN_ANNOUNCE_PERIOD_MS;
-        s_annIndex = (uint8_t)((s_annIndex + 1) % maxRows);
-      }
-      uint16_t annRow = s_annIndex < maxRows ? s_annIndex : 0;
-      for (uint16_t tries = 0; tries < maxRows; tries++) {
-        if (strcasecmp(rows[annRow].etd, "Cancelled") != 0) break;
-        annRow = (uint16_t)((annRow + 1) % maxRows);
-      }
-      const TrainService& ann = rows[annRow];
-      if (strcasecmp(ann.etd, "Cancelled") != 0) {
-        snprintf(annLine1, sizeof(annLine1), "%s TO %s", ann.std, ann.destination);
-        if (ann.callingPoints[0]) {
-          snprintf(annLine2, sizeof(annLine2), "CALLING AT: %s", ann.callingPoints);
+      // Build the one continuous ticker line out of every non-cancelled
+      // departure, in order - nothing cycles or switches, it just keeps
+      // scrolling, same as a real platform display.
+      size_t used = 0;
+      ticker[0] = 0;
+      for (uint16_t i = 0; i < maxRows && used + 1 < sizeof(ticker); i++) {
+        const TrainService& r = rows[i];
+        if (strcasecmp(r.etd, "Cancelled") == 0) continue;
+        char item[160];
+        if (r.callingPoints[0] && r.operatorName[0]) {
+          snprintf(item, sizeof(item), "%s TO %s - CALLING AT %s - OPERATED BY %s",
+                   r.std, r.destination, r.callingPoints, r.operatorName);
+        } else if (r.callingPoints[0]) {
+          snprintf(item, sizeof(item), "%s TO %s - CALLING AT %s", r.std, r.destination, r.callingPoints);
+        } else if (r.operatorName[0]) {
+          snprintf(item, sizeof(item), "%s TO %s - OPERATED BY %s", r.std, r.destination, r.operatorName);
         } else {
-          fr_copy(annLine2, sizeof(annLine2), "NON-STOP, OR CALLING POINTS UNKNOWN");
+          snprintf(item, sizeof(item), "%s TO %s", r.std, r.destination);
         }
-        if (ann.operatorName[0]) snprintf(annLine3, sizeof(annLine3), "OPERATED BY %s", ann.operatorName);
+        const int n2 = snprintf(ticker + used, sizeof(ticker) - used, "%s%s",
+                                used ? "   *   " : "", item);
+        if (n2 < 0) break;
+        used += (size_t)n2;
+        if (used >= sizeof(ticker)) { used = sizeof(ticker) - 1; break; }
       }
     }
-    if (st.nrccMessage[0]) {
+
+    // Ticker strip: a shaded bar across the bottom, scrolling continuously -
+    // a disruption notice (if any) always leads it, same as a real board
+    // puts service alerts first.
+    s.fillRect(0, listBottom, SCREEN_W, tickerH, th.gridDim);
+    s.drawFastHLine(0, listBottom, SCREEN_W, th.grid);
+    char full[300];
+    if (st.nrccMessage[0] && ticker[0]) {
+      snprintf(full, sizeof(full), "%s   *   %s", st.nrccMessage, ticker);
+    } else if (st.nrccMessage[0]) {
+      fr_copy(full, sizeof(full), st.nrccMessage);
+    } else {
+      fr_copy(full, sizeof(full), ticker);
+    }
+    if (full[0]) {
+      const uint32_t dtMs = s_tickerLastMs ? (now - s_tickerLastMs) : 0;
+      s_tickerLastMs = now;
+      // A dt this large only happens after being away from this screen (or
+      // just booted) - skip the jump rather than visibly "catching up".
+      if (dtMs > 0 && dtMs < 2000) s_tickerX -= (dtMs * TRAIN_TICKER_PX_PER_SEC) / 1000.0f;
       s.setTextDatum(TL_DATUM);
-      s.setTextColor(th.warn);
-      char msg[46];
-      fr_copy(msg, sizeof(msg), st.nrccMessage);
-      s.drawString(msg, 6, RADAR_H - 12, 1);
+      s.setTextColor(th.select);
+      const int textW = s.textWidth(full, 2);
+      const int period = textW + TRAIN_TICKER_GAP_PX;
+      if (period > 0) {
+        while (s_tickerX <= -period) s_tickerX += period;
+        while (s_tickerX > 0) s_tickerX -= period;
+        // Draw two copies back-to-back so the loop point is seamless.
+        s.drawString(full, (int32_t)s_tickerX, listBottom + 4, 2);
+        s.drawString(full, (int32_t)s_tickerX + period, listBottom + 4, 2);
+      }
+    } else {
+      s_tickerLastMs = now;
     }
   }
 
@@ -1260,11 +1293,6 @@ static void drawTrainScreen() {
   panelBegin();
   panelText(14, "PRESS: REFRESH   MENU: SETTINGS", 2, th.text);
   panelText(38, "BACK: BACK TO RADAR", 2, th.text);
-  if (annLine1[0]) {
-    panelText(66, annLine1, 2, th.select);
-    if (annLine2[0]) panelText(88, annLine2, 1, th.text);
-    if (annLine3[0]) panelText(104, annLine3, 1, th.textDim);
-  }
   panelPush();
   drawHeader("TRAIN BOARD", "", "", trainIsConfigured() ? th.ok : th.warn);
 }
@@ -1777,7 +1805,11 @@ void uiUpdate(uint32_t now) {
 
   if (!displaySpritesOk()) return;
 
-  const bool animated = (s_screen == SCR_BOOT || s_screen == SCR_RADAR);
+  // SCR_TRAIN is animated too now, for the scrolling departure-board ticker
+  // at the bottom of the screen - it needs the same steady per-frame redraws
+  // as the radar, not the "redraw only when something changed" treatment
+  // every other static screen gets.
+  const bool animated = (s_screen == SCR_BOOT || s_screen == SCR_RADAR || s_screen == SCR_TRAIN);
   const uint32_t frameMs = 1000UL / g_settings.radarMaxFps;
   if (animated) {
     if (now - s_lastFrame < frameMs) return;

@@ -146,9 +146,20 @@ static bool writeI2s(const int16_t* samples, size_t sampleCount) {
   return true;
 }
 
-static bool playTone(uint16_t frequency, uint16_t durationMs, int16_t amplitude) {
-  Serial.printf("[audio] playTone: %u Hz, %u ms, amplitude %d - entering\n",
-                (unsigned)frequency, (unsigned)durationMs, (int)amplitude);
+// Every caller passes a "full scale for this tone" amplitude; this scales
+// that down by the user's volume setting (5..100%) so Volume in the Audio
+// settings actually controls how loud everything is, tones included - not
+// just the downloaded/built-in WAV clip.
+static int16_t scaleForVolume(int16_t amplitude) {
+  const uint8_t vol = g_settings.audioVolume ? g_settings.audioVolume : 100;
+  return (int16_t)(((int32_t)amplitude * vol) / 100);
+}
+
+static bool playTone(uint16_t frequency, uint16_t durationMs, int16_t amplitudeFull) {
+  const int16_t amplitude = scaleForVolume(amplitudeFull);
+  Serial.printf("[audio] playTone: %u Hz, %u ms, amplitude %d (full scale %d, volume %u%%) - entering\n",
+                (unsigned)frequency, (unsigned)durationMs, (int)amplitude, (int)amplitudeFull,
+                (unsigned)g_settings.audioVolume);
   if (frequency == 0) {
     Serial.println("[audio] playTone: ABORT - frequency is 0 (would divide by zero)");
     return false;
@@ -392,8 +403,9 @@ static void audioTask(void*) {
             l = src[(i + j) * 2];
             r = src[(i + j) * 2 + 1];
           }
-          out[j * 2] = l;
-          out[j * 2 + 1] = r;
+          // Volume applies to the clip too, not just generated tones.
+          out[j * 2] = scaleForVolume(l);
+          out[j * 2 + 1] = scaleForVolume(r);
         }
         if (!writeI2s(out, n * 2)) { interrupted = true; break; }
         uint32_t urgent = 0;
@@ -502,11 +514,26 @@ static bool audioSuppressedForNight() {
   return true;
 }
 
-void audioPlayMilitary() {
+// Master "Enable audio" switch plus the three per-category toggles in the
+// Audio settings (Settings > Audio on the web setup page): military clip,
+// police/coastguard/air-ambulance tones, and the 7500/7700 emergency tones
+// can each be turned off independently, on top of the master switch muting
+// everything at once. categoryEnabled is one of g_settings.audio{Military,
+// Service,Emergency}Enabled.
+static bool audioAllowedForCategory(uint8_t categoryEnabled, const char* label) {
   if (!g_settings.audioEnabled) {
-    AUDIO_LOGV("[audio][v] audioPlayMilitary: ignored, announcements disabled in settings\n");
-    return;
+    AUDIO_LOGV("[audio][v] %s: ignored, audio disabled in settings\n", label);
+    return false;
   }
+  if (!categoryEnabled) {
+    AUDIO_LOGV("[audio][v] %s: ignored, this category is disabled in settings\n", label);
+    return false;
+  }
+  return true;
+}
+
+void audioPlayMilitary() {
+  if (!audioAllowedForCategory(g_settings.audioMilitaryEnabled, "audioPlayMilitary")) return;
   if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_CLIP, eSetBits) != pdPASS)
     Serial.println("[audio] military announcement unavailable: audio task is not ready");
@@ -530,30 +557,35 @@ bool audioTestSpeaker() {
 }
 
 void audioPlayEmergencyBeep() {
+  if (!audioAllowedForCategory(g_settings.audioEmergencyEnabled, "audioPlayEmergencyBeep")) return;
   if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_ALERT, eSetBits) != pdPASS)
     Serial.println("[audio] emergency beep unavailable: audio task is not ready");
 }
 
 void audioPlayPolice() {
+  if (!audioAllowedForCategory(g_settings.audioServiceEnabled, "audioPlayPolice")) return;
   if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_POLICE, eSetBits) != pdPASS)
     Serial.println("[audio] police tone unavailable: audio task is not ready");
 }
 
 void audioPlayCoastguard() {
+  if (!audioAllowedForCategory(g_settings.audioServiceEnabled, "audioPlayCoastguard")) return;
   if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_COASTGUARD, eSetBits) != pdPASS)
     Serial.println("[audio] coastguard tone unavailable: audio task is not ready");
 }
 
 void audioPlayAirAmbulance() {
+  if (!audioAllowedForCategory(g_settings.audioServiceEnabled, "audioPlayAirAmbulance")) return;
   if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_AIRAMB, eSetBits) != pdPASS)
     Serial.println("[audio] air ambulance tone unavailable: audio task is not ready");
 }
 
 void audioPlayEmergency7700() {
+  if (!audioAllowedForCategory(g_settings.audioEmergencyEnabled, "audioPlayEmergency7700")) return;
   if (audioSuppressedForNight()) return;
   if (!s_task || xTaskNotify(s_task, AUDIO_NOTIFY_ALERT_7700, eSetBits) != pdPASS)
     Serial.println("[audio] 7700 alert unavailable: audio task is not ready");

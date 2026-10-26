@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "TRANSPORT TRACKER"
-#define FW_VERSION "6.4.1"
+#define FW_VERSION "6.4.5"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in
@@ -38,7 +38,7 @@
 // location/every other on-device setting back to this file's defaults;
 // leaving it alone (the normal case for an ordinary update) keeps everything
 // the user has configured on the device, even though config.h itself changed.
-#define SETTINGS_SCHEMA_VERSION 4
+#define SETTINGS_SCHEMA_VERSION 5
 
 // ===========================================================================
 //  WIFI
@@ -205,6 +205,10 @@
 //  AUDIO ANNOUNCEMENTS (I2S amplifier, e.g. MAX98357A, + speaker)
 // ===========================================================================
 #define AUDIO_ENABLED              1
+#define AUDIO_VOLUME_DEFAULT       100     // 5..100 percent, applies to every tone/clip/announcement
+#define AUDIO_MILITARY_ENABLED     1       // military aircraft announcement clip
+#define AUDIO_SERVICE_ENABLED      1       // police / coastguard / air ambulance tones
+#define AUDIO_EMERGENCY_ENABLED    1       // 7500/7700 squawk alert tones
 #define AUDIO_I2S_BCLK_PIN         18      // amp BCLK
 #define AUDIO_I2S_LRC_PIN          21      // amp LRC / LRCLK / WSEL
 #define AUDIO_I2S_DOUT_PIN         7       // amp DIN

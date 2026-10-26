@@ -57,7 +57,11 @@ struct Settings {
   uint8_t  encoderStepsPerDetent;
   uint16_t buttonDebounceMs;
   uint16_t longPressMs;
-  uint8_t  audioEnabled;
+  uint8_t  audioEnabled;          // master switch - off mutes everything below too
+  uint8_t  audioVolume;           // 5..100 percent, applies to every tone/clip/announcement
+  uint8_t  audioMilitaryEnabled;  // military aircraft announcement clip
+  uint8_t  audioServiceEnabled;   // police / coastguard / air ambulance tones
+  uint8_t  audioEmergencyEnabled; // 7500/7700 squawk alert tones
   uint8_t  debugAircraftTypes;
   uint8_t  adsbValidateTls;
   uint8_t  radarMaxFps;

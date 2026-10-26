@@ -117,6 +117,10 @@ static void applyDefaults(Settings& s) {
   s.buttonDebounceMs = BUTTON_DEBOUNCE_MS;
   s.longPressMs = LONG_PRESS_MS;
   s.audioEnabled = AUDIO_ENABLED;
+  s.audioVolume = AUDIO_VOLUME_DEFAULT;
+  s.audioMilitaryEnabled = AUDIO_MILITARY_ENABLED;
+  s.audioServiceEnabled = AUDIO_SERVICE_ENABLED;
+  s.audioEmergencyEnabled = AUDIO_EMERGENCY_ENABLED;
   s.debugAircraftTypes = DEBUG_PRINT_AIRCRAFT_TYPES;
   s.adsbValidateTls = ADSB_VALIDATE_TLS;
   s.radarMaxFps = RADAR_MAX_FPS;
@@ -204,6 +208,10 @@ static void sanitize(Settings& s) {
   s.buttonDebounceMs = fr_clamp<uint16_t>(s.buttonDebounceMs, 5, 250);
   s.longPressMs = fr_clamp<uint16_t>(s.longPressMs, 250, 5000);
   s.audioEnabled = s.audioEnabled ? 1 : 0;
+  s.audioVolume = fr_clamp<uint8_t>(s.audioVolume, 5, 100);
+  s.audioMilitaryEnabled = s.audioMilitaryEnabled ? 1 : 0;
+  s.audioServiceEnabled = s.audioServiceEnabled ? 1 : 0;
+  s.audioEmergencyEnabled = s.audioEmergencyEnabled ? 1 : 0;
   s.debugAircraftTypes = s.debugAircraftTypes ? 1 : 0;
   s.adsbValidateTls = s.adsbValidateTls ? 1 : 0;
   s.radarMaxFps = fr_clamp<uint8_t>(s.radarMaxFps, 5, 60);
@@ -264,6 +272,10 @@ void settingsSave() {
   p.putUShort("debounce", g_settings.buttonDebounceMs);
   p.putUShort("longms", g_settings.longPressMs);
   p.putUChar("audio", g_settings.audioEnabled);
+  p.putUChar("audiovol", g_settings.audioVolume);
+  p.putUChar("audiomil", g_settings.audioMilitaryEnabled);
+  p.putUChar("audiosvc", g_settings.audioServiceEnabled);
+  p.putUChar("audioemg", g_settings.audioEmergencyEnabled);
   p.putUChar("debugac", g_settings.debugAircraftTypes);
   p.putUChar("adstls", g_settings.adsbValidateTls);
   p.putUChar("fps", g_settings.radarMaxFps);
@@ -340,6 +352,10 @@ void settingsBegin() {
   g_settings.buttonDebounceMs = p.getUShort("debounce", g_settings.buttonDebounceMs);
   g_settings.longPressMs = p.getUShort("longms", g_settings.longPressMs);
   g_settings.audioEnabled = p.getUChar("audio", g_settings.audioEnabled);
+  g_settings.audioVolume = p.getUChar("audiovol", g_settings.audioVolume);
+  g_settings.audioMilitaryEnabled = p.getUChar("audiomil", g_settings.audioMilitaryEnabled);
+  g_settings.audioServiceEnabled = p.getUChar("audiosvc", g_settings.audioServiceEnabled);
+  g_settings.audioEmergencyEnabled = p.getUChar("audioemg", g_settings.audioEmergencyEnabled);
   g_settings.debugAircraftTypes = p.getUChar("debugac", g_settings.debugAircraftTypes);
   g_settings.adsbValidateTls = p.getUChar("adstls", g_settings.adsbValidateTls);
   g_settings.radarMaxFps = p.getUChar("fps", g_settings.radarMaxFps);

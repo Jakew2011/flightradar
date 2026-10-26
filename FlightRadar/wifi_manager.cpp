@@ -283,9 +283,25 @@ static void handleSave() {
       b += F("<br><label><input type='checkbox' name='debugac' value='1' style='width:auto'");
       if (g_settings.debugAircraftTypes) b += F(" checked");
       b += F("> Log decoded aircraft type details to Serial</label>");
-      b += F("<h3>Audio announcements</h3><label><input type='checkbox' name='audio' value='1' style='width:auto'");
+      b += F("<h3>Audio</h3><label><input type='checkbox' name='audio' value='1' style='width:auto'");
       if (g_settings.audioEnabled) b += F(" checked");
-      b += F("> Enable audio announcements</label>");
+      b += F("> Enable audio (master switch - off mutes everything below too)</label>");
+      b += F("<label>Volume</label><input type='range' name='audiovol' min='5' max='100' value='");
+      b += String(g_settings.audioVolume);
+      b += F("' oninput=\"this.nextElementSibling.value=this.value+'%'\"> "
+             "<output>"); b += String(g_settings.audioVolume); b += F("%</output>");
+      b += F("<br><label><input type='checkbox' name='audiomil' value='1' style='width:auto'");
+      if (g_settings.audioMilitaryEnabled) b += F(" checked");
+      b += F("> Military aircraft announcement</label>");
+      b += F("<br><label><input type='checkbox' name='audiosvc' value='1' style='width:auto'");
+      if (g_settings.audioServiceEnabled) b += F(" checked");
+      b += F("> Police / coastguard / air ambulance tones</label>");
+      b += F("<br><label><input type='checkbox' name='audioemg' value='1' style='width:auto'");
+      if (g_settings.audioEmergencyEnabled) b += F(" checked");
+      b += F("> 7500/7700 emergency squawk tones</label>");
+      b += F("<p><small>These three can each be switched off independently of the master "
+             "switch above. The speaker test button always plays regardless of any of "
+             "these, so you can check the speaker itself is working.</small></p>");
       addTextInput(b, "Audio WAV URL", "wavurl", g_settings.audioUrl, 255);
       addNumberInput(b, "Maximum WAV size (bytes)", "wavmax", g_settings.audioMaxBytes);
       addNumberInput(b, "WAV download timeout (ms)", "wavtmo", g_settings.audioFetchTimeoutMs);
@@ -405,6 +421,7 @@ static void handleSave() {
       READ_SMALL("range", rangeIndex, 0, RANGE_COUNT - 1);
       READ_SMALL("theme", theme, 0, 2);
       READ_SMALL("bright", brightness, 5, 100);
+      READ_SMALL("audiovol", audioVolume, 5, 100);
       READ_SMALL("sweep", sweepSpeed, 0, 3);
       READ_SMALL("dunit", distUnit, 0, 1);
       READ_SMALL("aunit", altUnit, 0, 1);
@@ -414,6 +431,9 @@ static void handleSave() {
     #undef READ_SMALL
       g_settings.portalEnabled = s_server->hasArg("portal") ? 1 : 0;
       g_settings.audioEnabled = s_server->hasArg("audio") ? 1 : 0;
+      g_settings.audioMilitaryEnabled = s_server->hasArg("audiomil") ? 1 : 0;
+      g_settings.audioServiceEnabled = s_server->hasArg("audiosvc") ? 1 : 0;
+      g_settings.audioEmergencyEnabled = s_server->hasArg("audioemg") ? 1 : 0;
       g_settings.showGroundAircraft = s_server->hasArg("ground") ? 1 : 0;
       g_settings.adsbValidateTls = s_server->hasArg("adstls") ? 1 : 0;
       g_settings.debugAircraftTypes = s_server->hasArg("debugac") ? 1 : 0;

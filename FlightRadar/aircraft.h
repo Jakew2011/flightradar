@@ -67,13 +67,37 @@ bool      aircraftHasSelection();
 const Aircraft* aircraftSelected();
 bool      aircraftEmergencyActive();
 uint16_t  aircraftEmergencySquawk();
-// Lets the radar give control back to the user during an active 7500/7700
-// emergency: the header alert and audio keep going, but the radar stops
-// force-centring/force-zooming on that specific aircraft, so range changes
-// and BACK/HOME work normally again. Re-engages automatically the next time
-// a *different* aircraft (or the same one, after its emergency clears and
-// starts again) squawks an emergency.
+// Lets the radar give control back to the user during an active special-
+// squawk emergency: the header alert (and audio, for the two that have any)
+// keep going, but the radar stops force-centring/force-zooming on that
+// specific aircraft, so range changes and BACK/HOME work normally again.
+// Re-engages automatically the next time a *different* aircraft (or the
+// same one, after its emergency clears and starts again) squawks one of
+// these.
 void      aircraftDismissEmergencyFollow();
+
+// ---------------------------------------------------------------------------
+//  Special ("emergency-class") squawk codes. One shared table so the radar
+//  centring/forced-visibility behaviour, the header/toast text, and the
+//  global out-of-range lookup (adsb_api.cpp) all agree on exactly the same
+//  set instead of each hard-coding its own "== 7500 || == 7700" check.
+//  7500 (hijack) and 7700 (general emergency) are the only two that make a
+//  sound; 7600 (radio failure), 7100 and 4000 get the same radar/visual
+//  treatment - forced visible regardless of range, auto-centred/followed,
+//  shown in the header, protected from being evicted from a full aircraft
+//  list - but silently.
+// ---------------------------------------------------------------------------
+struct SpecialSquawk {
+  uint16_t    code;
+  const char* headerLabel;  // short word for the radar header, e.g. "HIJACK"
+  const char* toastLabel;   // full toast text, e.g. "HIJACK SQUAWK 7500"
+  bool        audible;      // true only for 7500 and 7700
+  uint8_t     priority;     // lower = takes priority when more than one is active at once
+};
+extern const SpecialSquawk SPECIAL_SQUAWKS[];
+extern const size_t        SPECIAL_SQUAWK_COUNT;
+// nullptr if sq isn't one of the codes in SPECIAL_SQUAWKS (including sq==0).
+const SpecialSquawk* aircraftSpecialSquawk(uint16_t sq);
 
 // Whatever the radar is currently centred on this frame (home, or an active
 // emergency/search-lock aircraft - see aircraftUpdate()). Valid any time

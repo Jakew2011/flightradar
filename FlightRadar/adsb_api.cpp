@@ -174,7 +174,7 @@ static bool adsbIngestElement(JsonDocument& doc, Aircraft& a, double homeLat, do
   } else if (squawk.is<uint16_t>()) {
     a.squawk = squawk.as<uint16_t>();
   }
-  if (globalAlertQuery && a.squawk != 7500 && a.squawk != 7700) return false;
+  if (globalAlertQuery && !aircraftSpecialSquawk(a.squawk)) return false;
 
   if (!doc["lat"].is<float>() || !doc["lon"].is<float>()) return false;   // no position
   a.latitude = doc["lat"].as<double>();
@@ -467,7 +467,7 @@ static void mergeAlertAircraft(Aircraft* combined, uint16_t& combinedCount,
     uint16_t victim = MAX_AIRCRAFT;
     float farthest = -1.0f;
     for (uint16_t j = 0; j < combinedCount; ++j) {
-      if (combined[j].squawk == 7500 || combined[j].squawk == 7700) continue;
+      if (aircraftSpecialSquawk(combined[j].squawk)) continue;
       if (combined[j].distance > farthest) {
         farthest = combined[j].distance;
         victim = j;
@@ -485,7 +485,7 @@ static void adsbTask(void*) {
   Aircraft* feedStage = (Aircraft*)aircraftAllocLarge(sizeof(Aircraft) * MAX_AIRCRAFT);
   Aircraft* feedCache = (Aircraft*)aircraftAllocLarge(
     sizeof(Aircraft) * MAX_AIRCRAFT * ADSB_FEED_COUNT);
-  Aircraft* alertCache = (Aircraft*)aircraftAllocLarge(sizeof(Aircraft) * MAX_AIRCRAFT * 2);
+  Aircraft* alertCache = (Aircraft*)aircraftAllocLarge(sizeof(Aircraft) * MAX_AIRCRAFT * SPECIAL_SQUAWK_COUNT);
   Aircraft* alertMerge = (Aircraft*)aircraftAllocLarge(sizeof(Aircraft) * MAX_AIRCRAFT);
   if (!stage || !feedStage || !feedCache || !alertCache || !alertMerge) {
     setStatus(false, 0, 0, "NO MEMORY");
@@ -501,9 +501,9 @@ static void adsbTask(void*) {
   uint16_t cachedCounts[ADSB_FEED_COUNT] = {};
   uint32_t cacheUpdatedMs[ADSB_FEED_COUNT] = {};
   bool cacheValid[ADSB_FEED_COUNT] = {};
-  uint16_t alertCounts[2] = {};
-  uint32_t alertUpdatedMs[2] = {};
-  bool alertValid[2] = {};
+  uint16_t alertCounts[SPECIAL_SQUAWK_COUNT] = {};
+  uint32_t alertUpdatedMs[SPECIAL_SQUAWK_COUNT] = {};
+  bool alertValid[SPECIAL_SQUAWK_COUNT] = {};
   uint8_t nextAlertIndex = 0;
   JsonDocument filter, doc;
   const char* fields[] = {"hex","flight","r","t","ownOp","lat","lon","alt_baro","alt_geom","gs",
@@ -575,7 +575,9 @@ static void adsbTask(void*) {
     // though adsb.fi was also configured and working - and adsb.lol is the one that's
     // been seen flaking with 429/503. Any feed with no known squawk-lookup path (the
     // "custom" source) is skipped quietly rather than spamming a failure every cycle.
-    const uint16_t alertSquawk = nextAlertIndex == 0 ? 7500 : 7700;
+    // Cycles round-robin through every code in SPECIAL_SQUAWKS (aircraft.h), not just
+    // 7500/7700, so 7600/7100/4000 get the same out-of-range global lookup too.
+    const uint16_t alertSquawk = SPECIAL_SQUAWKS[nextAlertIndex].code;
     uint16_t alertCount = 0;
     int alertHttp = 0;
     bool alertAnyOk = false;
@@ -614,7 +616,7 @@ static void adsbTask(void*) {
       Serial.printf("[adsb] global squawk %u: all feeds failed this cycle; retaining recent reports\n",
                     (unsigned)alertSquawk);
     }
-    nextAlertIndex = (uint8_t)((nextAlertIndex + 1) % 2);
+    nextAlertIndex = (uint8_t)((nextAlertIndex + 1) % SPECIAL_SQUAWK_COUNT);
 
     const uint32_t combinedAt = millis();
     for (size_t i = firstFeed; i < endFeed; ++i) {
@@ -623,7 +625,7 @@ static void adsbTask(void*) {
       mergeFeedAircraft(stage, combinedCount,
                         feedCache + i * MAX_AIRCRAFT, cachedCounts[i]);
     }
-    for (uint8_t i = 0; i < 2; ++i) {
+    for (uint8_t i = 0; i < SPECIAL_SQUAWK_COUNT; ++i) {
       if (!alertValid[i] ||
           (uint32_t)(combinedAt - alertUpdatedMs[i]) > g_settings.aircraftMaxAgeMs) continue;
       mergeAlertAircraft(stage, combinedCount, alertCache + i * MAX_AIRCRAFT, alertCounts[i]);

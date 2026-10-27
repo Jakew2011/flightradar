@@ -177,7 +177,7 @@ void radarDrawAircraft(float rangeNm) {
     s_py[i] = RADAR_CY - (int16_t)lroundf(list[i].y * ppn);
     if (list[i].selected) { sel = i; continue; }
     iconDraw(spRadar, list[i].cls, s_px[i], s_py[i], list[i].hasHeading ? list[i].heading : 0.0f,
-             (list[i].squawk == 7500 || list[i].squawk == 7700) ? EMERGENCY_RED :
+             aircraftSpecialSquawk(list[i].squawk) ? EMERGENCY_RED :
                list[i].military ? th.military : th.aircraft, g_settings.aircraftIconScale);
   }
   if (sel >= 0) {
@@ -186,7 +186,7 @@ void radarDrawAircraft(float rangeNm) {
              g_settings.aircraftIconScale * 1.3f);
     spRadar.drawCircle(s_px[sel], s_py[sel], 14, th.select);
     spRadar.drawCircle(s_px[sel], s_py[sel], 15, th.select);
-    if (a.squawk == 7500 || a.squawk == 7700) {
+    if (aircraftSpecialSquawk(a.squawk)) {
       const uint16_t alertColor = ((millis() / 350) & 1) ? EMERGENCY_RED : RGB565(255, 96, 96);
       spRadar.drawCircle(s_px[sel], s_py[sel], 18, alertColor);
       spRadar.drawCircle(s_px[sel], s_py[sel], 20, alertColor);
@@ -218,8 +218,10 @@ void radarDrawAircraft(float rangeNm) {
     spRadar.fillRoundRect(54, 4, 212, 20, 4, bright ? EMERGENCY_RED : RGB565(110, 0, 0));
     spRadar.setTextDatum(MC_DATUM);
     spRadar.setTextColor(TFT_WHITE);
-    spRadar.drawString(aircraftEmergencySquawk() == 7500 ? "HIJACK SQUAWK 7500" :
-                       "EMERGENCY SQUAWK 7700", RADAR_CX, 14, 1);
+    {
+      const SpecialSquawk* sp = aircraftSpecialSquawk(aircraftEmergencySquawk());
+      spRadar.drawString(sp ? sp->toastLabel : "SPECIAL SQUAWK", RADAR_CX, 14, 1);
+    }
   }
 }
 

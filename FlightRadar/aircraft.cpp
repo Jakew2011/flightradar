@@ -37,6 +37,29 @@ static char      s_lockQuery[9] = "";     // normalized (uppercase, hyphens stri
 static uint32_t  s_lockKey = 0;           // last-matched aircraft's key, valid only while s_lockFound
 static bool      s_lockFound = false;     // true once s_lockQuery actually matched a visible-in-range aircraft
 
+// ---------------------------------------------------------------------------
+//  Special squawk table (see aircraft.h). Priority order: 7700 first (most
+//  severe, existing behaviour), then 7500, then the three silent codes in
+//  numeric order. Lower SpecialSquawk::priority wins when more than one
+//  aircraft in view is squawking a different special code at once.
+// ---------------------------------------------------------------------------
+const SpecialSquawk SPECIAL_SQUAWKS[] = {
+  { 7700, "EMERGENCY", "EMERGENCY SQUAWK 7700",      true,  0 },
+  { 7500, "HIJACK",    "HIJACK SQUAWK 7500",         true,  1 },
+  { 7600, "RADIO FAIL","RADIO FAILURE SQUAWK 7600",  false, 2 },
+  { 7100, "SQUAWK",    "SPECIAL SQUAWK 7100",         false, 3 },
+  { 4000, "SQUAWK",    "SPECIAL SQUAWK 4000",         false, 4 },
+};
+const size_t SPECIAL_SQUAWK_COUNT = sizeof(SPECIAL_SQUAWKS) / sizeof(SPECIAL_SQUAWKS[0]);
+
+const SpecialSquawk* aircraftSpecialSquawk(uint16_t sq) {
+  if (!sq) return nullptr;
+  for (size_t i = 0; i < SPECIAL_SQUAWK_COUNT; ++i) {
+    if (SPECIAL_SQUAWKS[i].code == sq) return &SPECIAL_SQUAWKS[i];
+  }
+  return nullptr;
+}
+
 void* aircraftAllocLarge(size_t bytes) {
   void* p = nullptr;
   if (psramFound()) p = ps_malloc(bytes);
@@ -143,7 +166,21 @@ static bool mergePending(uint32_t now) {
 // ---------------------------------------------------------------------------
 struct AnnounceEntry { uint32_t key; uint32_t untilMs; };
 static AnnounceEntry s_announceHist[16];
-static uint8_t       s_announcePending = 0;
+// One-shot "something is pending" flag, NOT a per-aircraft counter. If a
+// whole group of military aircraft all become newly visible in the same
+// update (a busy exercise, a large formation, or just a radar range change
+// that suddenly reveals a dozen+ of them at once that were previously out
+// of range/cooldown), this fires exactly ONE announcement/alert for the
+// batch, not one per airframe. Previously this was a counter incremented
+// per aircraft, so loop() in the .ino would drain it with a tight
+// back-to-back "while (aircraftPollAnnouncement()) audioPlayMilitary();"
+// burst - with 30+ pending at once that hammered the audio task with
+// overlapping clip-restart notifications and the UI with 30+ alert-screen
+// re-entries in a single loop() pass, which is what was crashing the board.
+// Each individual aircraft still gets its own cooldown entry below (so it
+// won't re-trigger a *future* batch on its own), this just stops a single
+// busy moment from queuing up a pile of back-to-back announcements.
+static bool          s_announcePending = false;
 
 static bool announceOnCooldown(uint32_t key, uint32_t now) {
   for (auto& e : s_announceHist) if (e.key == key) return (int32_t)(e.untilMs - now) > 0;
@@ -159,8 +196,8 @@ static void announceRemember(uint32_t key, uint32_t now) {
 }
 
 bool aircraftPollAnnouncement() {
-  if (s_announcePending == 0) return false;
-  s_announcePending--;
+  if (!s_announcePending) return false;
+  s_announcePending = false;
   return true;
 }
 
@@ -239,12 +276,14 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
   const bool listChanged = mergePending(now);
 
   const Aircraft* emergency = nullptr;
+  uint8_t emergencyPriority = 0xFF;
   for (uint16_t i = 0; i < s_count; ++i) {
     const Aircraft& a = s_list[i];
     if ((uint32_t)(now - a.reportMs) > g_settings.aircraftMaxAgeMs) continue;
-    if (a.squawk != 7500 && a.squawk != 7700) continue;
-    if (!emergency || a.squawk == 7700) emergency = &a;
-    if (emergency->squawk == 7700) break;
+    const SpecialSquawk* sp = aircraftSpecialSquawk(a.squawk);
+    if (!sp) continue;
+    if (!emergency || sp->priority < emergencyPriority) { emergency = &a; emergencyPriority = sp->priority; }
+    if (emergencyPriority == 0) break;    // 7700 already found - nothing outranks it
   }
 
   // Search-and-lock re-resolves every pass (not just when the query changes)
@@ -316,6 +355,9 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
 
   uint16_t w = 0, vis = 0, visMil = 0, visSvc = 0;
   bool selFound = false;
+  // Index 0=POLICE-1, 1=COASTGUARD-1, 2=AIR_AMBULANCE-1 (AircraftService
+  // starts at SVC_NONE=0, so subtract 1) - see the dedupe comment below.
+  bool queuedThisUpdate[3] = { false, false, false };
   for (uint16_t i = 0; i < s_count; i++) {
     Aircraft a = s_list[i];
     const int32_t age = (int32_t)(now - a.reportMs);
@@ -329,7 +371,7 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
     } else {
       a.bearing = 0;                                        // exactly at centre: no division
     }
-    const bool emergency = a.squawk == 7500 || a.squawk == 7700;
+    const bool emergency = aircraftSpecialSquawk(a.squawk) != nullptr;
     const bool isLocked = s_lockFound && a.key == s_lockKey;
     a.visible = (a.distance <= rangeNm || emergency || isLocked) &&
                 (g_settings.showGroundAircraft || !a.onGround || emergency || isLocked);
@@ -353,10 +395,19 @@ void aircraftUpdate(uint32_t now, float rangeNm) {
       if (a.visible) {
         if (a.military) {
           visMil++;
-          if (!announceOnCooldown(a.key, now) && s_announcePending < 255) s_announcePending++;
+          if (!announceOnCooldown(a.key, now)) s_announcePending = true;
         } else {
           visSvc++;
-          if (!announceOnCooldown(a.key, now)) serviceQueuePush(a.service);
+          // Same coalescing as the military flag above, per service type:
+          // a burst of several police (or coastguard, or air-ambulance)
+          // aircraft all newly appearing together queues that tone once,
+          // not once per airframe - queuedThisUpdate[] tracks which of the
+          // 3 service tones have already been queued during this single
+          // aircraftUpdate() pass.
+          if (!announceOnCooldown(a.key, now) && !queuedThisUpdate[a.service - 1]) {
+            serviceQueuePush(a.service);
+            queuedThisUpdate[a.service - 1] = true;
+          }
         }
       }
       announceRemember(a.key, now);

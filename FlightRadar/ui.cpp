@@ -514,9 +514,8 @@ static void drawPanelAircraft(const Aircraft& a) {
   panelCompactRow(106, "ICAO", a.icao[0] ? a.icao : "N/A");
   snprintf(buf, sizeof(buf), "%03d", (int)lroundf(a.bearing) % 360);
   panelCompactRow(117, "BRG", buf);
-  if (a.squawk == 7500 || a.squawk == 7700) {
-    snprintf(buf, sizeof(buf), "SQUAWK: %u - %s", (unsigned)a.squawk,
-             a.squawk == 7500 ? "HIJACK" : "EMERGENCY");
+  if (const SpecialSquawk* sp = aircraftSpecialSquawk(a.squawk)) {
+    snprintf(buf, sizeof(buf), "SQUAWK: %u - %s", (unsigned)a.squawk, sp->headerLabel);
   } else if (a.service != SVC_NONE) {
     snprintf(buf, sizeof(buf), "SERVICE: %s", aircraftServiceName(a.service));
   } else if (s_routeState == AIRCRAFT_ROUTE_READY) {
@@ -1412,7 +1411,8 @@ static void drawRadarScreen(uint32_t now) {
   char left[24], right[12];
   char rng[16];
   if (emergency) {
-    snprintf(left, sizeof(left), "%s %u", aircraftEmergencySquawk() == 7500 ? "HIJACK" : "EMERGENCY",
+    const SpecialSquawk* sp = aircraftSpecialSquawk(aircraftEmergencySquawk());
+    snprintf(left, sizeof(left), "%s %u", sp ? sp->headerLabel : "SQUAWK",
              (unsigned)aircraftEmergencySquawk());
   } else {
     fmtDistance(rng, sizeof(rng), range, true);
@@ -1750,13 +1750,17 @@ void uiUpdate(uint32_t now) {
       // whatever you pressed was undone a frame later. Now, once this has
       // fired, BACK/HOME (see aircraftDismissEmergencyFollow() in
       // aircraft.cpp) and the menu work normally again; the header alert and
-      // 7700/7500 tone already only ever played once per emergency anyway.
+      // tone (for the codes that have one - see SPECIAL_SQUAWKS in
+      // aircraft.h) already only ever played once per emergency anyway.
       if (key && (key != s_alertedKey || squawk != s_alertedSquawk)) {
         s_alertedKey = key;
         s_alertedSquawk = squawk;
-        if (squawk == 7700) audioPlayEmergency7700();
-        else audioPlayEmergencyBeep();
-        toast(squawk == 7500 ? "HIJACK SQUAWK 7500" : "EMERGENCY SQUAWK 7700", now, 5000);
+        const SpecialSquawk* sp = aircraftSpecialSquawk(squawk);
+        if (sp && sp->audible) {
+          if (squawk == 7700) audioPlayEmergency7700();
+          else audioPlayEmergencyBeep();
+        }
+        toast(sp ? sp->toastLabel : "SPECIAL SQUAWK", now, 5000);
         if (s_screen != SCR_RADAR) {
           // An active emergency squawk always wins, even over the train
           // board - it needs the radar screen specifically to show/follow

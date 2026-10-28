@@ -28,7 +28,7 @@
 #endif
 
 #define FW_NAME    "TRANSPORT TRACKER"
-#define FW_VERSION "6.4.9"
+#define FW_VERSION "6.5.2"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in

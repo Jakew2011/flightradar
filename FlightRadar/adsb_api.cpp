@@ -576,7 +576,7 @@ static void adsbTask(void*) {
     // been seen flaking with 429/503. Any feed with no known squawk-lookup path (the
     // "custom" source) is skipped quietly rather than spamming a failure every cycle.
     // Cycles round-robin through every code in SPECIAL_SQUAWKS (aircraft.h), not just
-    // 7500/7700, so 7600/7100/4000 get the same out-of-range global lookup too.
+    // 7500/7700, so 7600 gets the same out-of-range global lookup too.
     const uint16_t alertSquawk = SPECIAL_SQUAWKS[nextAlertIndex].code;
     uint16_t alertCount = 0;
     int alertHttp = 0;

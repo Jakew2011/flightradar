@@ -39,16 +39,14 @@ static bool      s_lockFound = false;     // true once s_lockQuery actually matc
 
 // ---------------------------------------------------------------------------
 //  Special squawk table (see aircraft.h). Priority order: 7700 first (most
-//  severe, existing behaviour), then 7500, then the three silent codes in
-//  numeric order. Lower SpecialSquawk::priority wins when more than one
-//  aircraft in view is squawking a different special code at once.
+//  severe, existing behaviour), then 7500, then 7600. Lower
+//  SpecialSquawk::priority wins when more than one aircraft in view is
+//  squawking a different special code at once.
 // ---------------------------------------------------------------------------
 const SpecialSquawk SPECIAL_SQUAWKS[] = {
   { 7700, "EMERGENCY", "EMERGENCY SQUAWK 7700",      true,  0 },
   { 7500, "HIJACK",    "HIJACK SQUAWK 7500",         true,  1 },
   { 7600, "RADIO FAIL","RADIO FAILURE SQUAWK 7600",  false, 2 },
-  { 7100, "SQUAWK",    "SPECIAL SQUAWK 7100",         false, 3 },
-  { 4000, "SQUAWK",    "SPECIAL SQUAWK 4000",         false, 4 },
 };
 const size_t SPECIAL_SQUAWK_COUNT = sizeof(SPECIAL_SQUAWKS) / sizeof(SPECIAL_SQUAWKS[0]);
 
@@ -165,7 +163,19 @@ static bool mergePending(uint32_t now) {
 //  doesn't spam the speaker on every pass of a slow orbit).
 // ---------------------------------------------------------------------------
 struct AnnounceEntry { uint32_t key; uint32_t untilMs; };
-static AnnounceEntry s_announceHist[16];
+// Sized to MAX_AIRCRAFT, not a small fixed guess: this table has to hold a
+// cooldown entry for every currently-tracked military/service aircraft at
+// once. It used to be a 16-entry table shared across ALL of them - fine for
+// a handful, but with real busy airspace (e.g. 51 simultaneous military
+// aircraft, as reported), the 17th distinct aircraft onward started evicting
+// cooldown entries that hadn't expired yet. An evicted aircraft looks
+// "not on cooldown" again on the very next aircraftUpdate() pass (~40ms
+// later), which immediately re-set the pending-announcement flag - so
+// instead of one announcement for the whole batch, the table thrashed
+// constantly and it announced over and over, tens of times. MAX_AIRCRAFT
+// slots means every tracked aircraft can hold its own entry simultaneously,
+// so nothing gets evicted just because the airspace is busy.
+static AnnounceEntry s_announceHist[MAX_AIRCRAFT];
 // One-shot "something is pending" flag, NOT a per-aircraft counter. If a
 // whole group of military aircraft all become newly visible in the same
 // update (a busy exercise, a large formation, or just a radar range change
@@ -187,8 +197,8 @@ static bool announceOnCooldown(uint32_t key, uint32_t now) {
   return false;
 }
 static void announceRemember(uint32_t key, uint32_t now) {
-  uint8_t oldest = 0;
-  for (uint8_t i = 0; i < 16; i++) {
+  uint16_t oldest = 0;
+  for (uint16_t i = 0; i < MAX_AIRCRAFT; i++) {
     if (s_announceHist[i].key == key || s_announceHist[i].key == 0) { oldest = i; break; }
     if (s_announceHist[i].untilMs < s_announceHist[oldest].untilMs) oldest = i;
   }

@@ -82,10 +82,10 @@ void      aircraftDismissEmergencyFollow();
 //  global out-of-range lookup (adsb_api.cpp) all agree on exactly the same
 //  set instead of each hard-coding its own "== 7500 || == 7700" check.
 //  7500 (hijack) and 7700 (general emergency) are the only two that make a
-//  sound; 7600 (radio failure), 7100 and 4000 get the same radar/visual
-//  treatment - forced visible regardless of range, auto-centred/followed,
-//  shown in the header, protected from being evicted from a full aircraft
-//  list - but silently.
+//  sound; 7600 (radio failure) gets the same radar/visual treatment -
+//  forced visible regardless of range, auto-centred/followed, shown in the
+//  header, protected from being evicted from a full aircraft list - but
+//  silently.
 // ---------------------------------------------------------------------------
 struct SpecialSquawk {
   uint16_t    code;

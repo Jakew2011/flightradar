@@ -27,8 +27,8 @@
   using int64_t  = signed long long;
 #endif
 
-#define FW_NAME    "TRANSPORT TRACKER"
-#define FW_VERSION "6.5.2"
+#define FW_NAME    "TRANSPORTTRACKER"
+#define FW_VERSION "6.5.3"
 
 // Saved-settings (flash/NVS) layout version. This is DELIBERATELY separate
 // from FW_VERSION above. Only bump this when the Settings struct in
@@ -336,7 +336,7 @@
 #define AIRCRAFT_BLEND_MS           1500
 // Maximum number of aircraft kept (nearest ones win). Each uses ~180 bytes
 // of PSRAM (x3 buffers).
-#define MAX_AIRCRAFT                999
+#define MAX_AIRCRAFT                250
 // 1 = also show aircraft reported as being on the ground.
 #define SHOW_GROUND_AIRCRAFT        0
 
@@ -402,7 +402,7 @@
 // which the train board uses for the on-screen "calling at... operated
 // by..." announcement line.
 #define OPENLDBWS_ENDPOINT          "https://api1.raildata.org.uk/1010-live-departure-board-dep1_2/LDBWS/api/20220120/GetDepBoardWithDetails"
-// 3-letter CRS station code, e.g. "" = . Changeable on the
+// 3-letter CRS station code, e.g. "LKX" = . Changeable on the
 // device (Advanced menu) and in the web setup portal without reflashing.
 #define TRAIN_DEFAULT_STATION_CRS   "LKX"
 // How often the board is refreshed while it's the active screen (ms).

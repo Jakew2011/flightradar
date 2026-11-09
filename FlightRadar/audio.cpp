@@ -254,6 +254,8 @@ static bool playAirAmbulanceTone() {
 // it. Every failure path is logged and returns false so the caller falls
 // back to the built-in placeholder clip - a bad or unreachable URL never
 // stops the rest of the firmware from working.
+static uint32_t s_lastFetchFailMs = 0;   // millis() of the last failed download, 0 = none
+
 static bool fetchWav() {
   if (!g_settings.audioUrl[0]) return false;
 
@@ -360,7 +362,11 @@ static void audioTask(void*) {
     }
     if (requests & AUDIO_NOTIFY_CLIP) {
       s_clipBusy = true;
-      if (!s_fetchedBuf && g_settings.audioUrl[0]) {
+      // Only (re)try the download if it hasn't failed recently: a dead URL or
+      // offline WiFi used to re-run the whole HTTPS handshake on EVERY
+      // announcement, each one a fresh chance to run out of memory/stack.
+      const bool fetchBackoff = s_lastFetchFailMs && (uint32_t)(millis() - s_lastFetchFailMs) < 300000UL;
+      if (!s_fetchedBuf && g_settings.audioUrl[0] && !fetchBackoff) {
         const uint32_t waitStart = millis();
         while (!wifiIsConnected() &&
                (uint32_t)(millis() - waitStart) < g_settings.audioWifiWaitMs) {
@@ -371,10 +377,13 @@ static void audioTask(void*) {
           }
         }
         if (wifiIsConnected() && fetchWav()) {
+          s_lastFetchFailMs = 0;
           Serial.printf("[audio] using configured WAV: %lu Hz, %u channel(s), %lu KB\n",
                         (unsigned long)s_wav.sampleRate, s_wav.channels,
                         (unsigned long)(s_wav.dataLen / 1024));
-        } else if (!wifiIsConnected()) {
+        } else if (wifiIsConnected()) {
+          s_lastFetchFailMs = millis() | 1;     // |1 keeps it non-zero
+        } else {
           Serial.println("[audio] WiFi unavailable; playing built-in clip");
         }
       }
@@ -490,7 +499,7 @@ void audioInit() {
   const esp_err_t startResult = i2s_start(I2S_NUM_0);
   Serial.printf("[audio] i2s_start -> %s\n", esp_err_to_name(startResult));
 
-  const BaseType_t taskResult = xTaskCreatePinnedToCore(audioTask, "audio", 8192, nullptr, 1, &s_task, 0);
+  const BaseType_t taskResult = xTaskCreatePinnedToCore(audioTask, "audio", 24576, nullptr, 1, &s_task, 0);
   if (taskResult != pdPASS) {
     s_task = nullptr;
     Serial.printf("[audio] FATAL: could not create audio task (xTaskCreatePinnedToCore returned %d) - "
